@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/vishvananda/netlink"
 
 	"github.com/go-logr/logr"
 	ndp "github.com/mdlayher/ndp"
@@ -929,6 +930,27 @@ func getIps(origin string) []v1alpha1.IP {
 	return ipList.Items
 }
 
+func netlinkListner(r *NetdataReconciler, ctx context.Context) {
+	ch := make(chan netlink.NeighUpdate)
+	done := make(chan struct{})
+	defer close(done)
+	if err := netlink.NeighSubscribe(ch, done); err != nil {
+		r.Log.Error(err, " . Netlink listner subscription failed")
+		return
+	}
+
+	for data := range ch {
+		ip := data.Neigh.IP.String()
+
+		// ignore empty IP || IPv4 || link local address
+		if ip == "::" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
+			continue
+		}
+
+		fmt.Printf("%+v\n", data)
+	}
+}
+
 func ndpProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch chan NetdataMap, wg *sync.WaitGroup) {
 	defer wg.Done()
 	subnetList := c.getSubnets()
@@ -1204,7 +1226,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// get configmap data
 	var c netdataconf
-	c.getConf()
+	// c.getConf()
 
 	//	fmt.Printf("runtime.GOMAXPROC() = %+v \n", runtime.GOMAXPROC)
 	r.Log.V(1).Info("\nMergeRes init state.", "mergeRes", mergeRes)
@@ -1228,6 +1250,9 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		wg.Add(1)
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
+	case "netlink":
+		netlinkListner(r, ctx)
+		fmt.Printf("\nStarted netlink listner \n")
 	default:
 		fmt.Printf("\nRequire define proper NETSOURCE environment variable. current NETSOURCE is +%v \n", netSource)
 		os.Exit(11)
