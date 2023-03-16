@@ -71,6 +71,7 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
+	"golang.org/x/sys/unix"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -944,6 +945,11 @@ func netlinkListner(r *NetdataReconciler, ctx context.Context) {
 
 		// ignore empty IP || IPv4 || link local address
 		if ip == "::" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
+			continue
+		}
+
+		// Ignore RTM_NEWNEIGH entries with States PROBE, STALE, INCOMPLETE, FAILED stc.
+		if (data.Type == unix.RTM_NEWNEIGH) && (data.Neigh.State != netlink.NUD_REACHABLE) {
 			continue
 		}
 
