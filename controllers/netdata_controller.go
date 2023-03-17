@@ -931,16 +931,25 @@ func getIps(origin string) []v1alpha1.IP {
 	return ipList.Items
 }
 
-func netlinkListner(r *NetdataReconciler, ctx context.Context) {
-	ch := make(chan netlink.NeighUpdate)
+func NetlinkProcessor(ctx context.Context, ch chan NetdataMap) {
+	fmt.Println("starting netlink processor")
+	for netData := range ch {
+		fmt.Printf("%s ,%+v\n", time.Now().Format(time.RFC3339), netData)
+		// logic to create IPAM object goes here...
+	}
+}
+
+func NetlinkListner(ctx context.Context, ch chan NetdataMap) {
+	fmt.Println("starting netlink listner")
+	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
 	defer close(done)
-	if err := netlink.NeighSubscribe(ch, done); err != nil {
-		r.Log.Error(err, " . Netlink listner subscription failed")
+	if err := netlink.NeighSubscribe(chNetlink, done); err != nil {
+		fmt.Printf("Netlink listner subscription failed, %v", err)
 		return
 	}
 
-	for data := range ch {
+	for data := range chNetlink {
 		ip := data.Neigh.IP.String()
 
 		// ignore empty IP || IPv4 || link local address
@@ -953,7 +962,14 @@ func netlinkListner(r *NetdataReconciler, ctx context.Context) {
 			continue
 		}
 
-		fmt.Printf("%+v\n", data)
+		// prepare netDataMap and send on the channel
+		m := make(NetdataMap)
+		mac := data.Neigh.HardwareAddr.String()
+
+		m[mac] = newNetdataSpec(mac, ip, "", "ipv6")
+		//fmt.Println("Netlink ", "ipv6 is", ip, " mac is ", mac)
+		ch <- m
+		//fmt.Println("added to channel ", "ipv6 is ", ip, " mac is ", mac)
 	}
 }
 
@@ -1257,8 +1273,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
 	case "netlink":
-		netlinkListner(r, ctx)
-		fmt.Printf("\nStarted netlink listner \n")
+
 	default:
 		fmt.Printf("\nRequire define proper NETSOURCE environment variable. current NETSOURCE is +%v \n", netSource)
 		os.Exit(11)
