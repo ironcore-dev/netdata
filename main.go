@@ -122,11 +122,11 @@ func main() {
 	// get configmap data
 
 	c := controllers.GetConf()
-	// start netlink listner and processor
+	// start netlink listener and processor
 	netSource := os.Getenv("NETSOURCE")
 	if netSource == "netlink" {
 		ch := make(chan controllers.NetdataMap, 1000)
-		go controllers.NetlinkListner(context.TODO(), ch)
+		go controllers.NetlinkListener(context.TODO(), ch)
 		go controllers.NetlinkProcessor(context.TODO(), ch, c)
 	}
 

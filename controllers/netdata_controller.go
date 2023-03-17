@@ -983,13 +983,13 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 
 }
 
-func NetlinkListner(ctx context.Context, ch chan NetdataMap) {
-	fmt.Println("starting netlink listner")
+func NetlinkListener(ctx context.Context, ch chan NetdataMap) {
+	fmt.Println("starting netlink listener")
 	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
 	defer close(done)
 	if err := netlink.NeighSubscribe(chNetlink, done); err != nil {
-		fmt.Printf("Netlink listner subscription failed, %v", err)
+		fmt.Printf("Netlink listener subscription failed, %v", err)
 		return
 	}
 
