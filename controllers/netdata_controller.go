@@ -181,8 +181,14 @@ type netdataconf struct {
 	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
 }
 
-func (c *netdataconf) getConf() *netdataconf {
+var Netdataconf netdataconf
 
+func GetConf() *netdataconf {
+
+	return Netdataconf.getConf()
+}
+
+func (c *netdataconf) getConf() *netdataconf {
 	yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
 	if err != nil {
 		log.Fatalf("yamlFile.Get err   #%v ", err)
@@ -562,6 +568,41 @@ func createNetCRD(mv NetdataSpec, conf *netdataconf, ctx context.Context, r *Net
 	createIPAM(conf, ctx, *ipIPAM)
 }
 
+func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context) {
+	macLow := strings.ToLower(mv.MACAddress)
+	mv.MACAddress = macLow
+
+	crdname := strings.ReplaceAll(macLow, ":", "")
+	labels := make(map[string]string)
+	for idx := range mv.Addresses {
+		ipsubnet := &mv.Addresses[idx]
+		ips := ipsubnet.IPS
+		ipsubnet.IPType = IpVersion(ips[0])
+		for jdx := range ips {
+			labels["ip"] = strings.ReplaceAll(ips[jdx], ":", "_")
+		}
+	}
+	labels["origin"] = os.Getenv("NETSOURCE")
+	labels["mac"] = crdname
+
+	ipaddr, _ := v1alpha1.IPAddrFromString(mv.Addresses[0].IPS[0])
+
+	ipIPAM := &v1alpha1.IP{
+		ObjectMeta: v1.ObjectMeta{
+			GenerateName: crdname + "-" + os.Getenv("NETSOURCE") + "-",
+			Namespace:    "rahultest", // need to pick this from config file
+			Labels:       labels,
+		},
+		Spec: v1alpha1.IPSpec{
+			Subnet: corev1.LocalObjectReference{
+				Name: "emptynameshouldnotexist",
+			},
+			IP: ipaddr,
+		},
+	}
+
+	createIPAM(conf, ctx, *ipIPAM)
+}
 func optStr(o ndp.Option) string {
 	switch o := o.(type) {
 	case *ndp.LinkLayerAddress:
@@ -931,12 +972,15 @@ func getIps(origin string) []v1alpha1.IP {
 	return ipList.Items
 }
 
-func NetlinkProcessor(ctx context.Context, ch chan NetdataMap) {
+func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf) {
 	fmt.Println("starting netlink processor")
-	for netData := range ch {
-		fmt.Printf("%s ,%+v\n", time.Now().Format(time.RFC3339), netData)
-		// logic to create IPAM object goes here...
+
+	for entity := range ch {
+		for _, v := range entity {
+			createNetCRDNew(v, conf, ctx)
+		}
 	}
+
 }
 
 func NetlinkListner(ctx context.Context, ch chan NetdataMap) {
@@ -1248,7 +1292,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// get configmap data
 	var c netdataconf
-	// c.getConf()
+	c.getConf()
 
 	//	fmt.Printf("runtime.GOMAXPROC() = %+v \n", runtime.GOMAXPROC)
 	r.Log.V(1).Info("\nMergeRes init state.", "mergeRes", mergeRes)

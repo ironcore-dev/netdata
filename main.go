@@ -119,13 +119,15 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+	// get configmap data
 
+	c := controllers.GetConf()
 	// start netlink listner and processor
 	netSource := os.Getenv("NETSOURCE")
 	if netSource == "netlink" {
 		ch := make(chan controllers.NetdataMap, 1000)
 		go controllers.NetlinkListner(context.TODO(), ch)
-		go controllers.NetlinkProcessor(context.TODO(), ch)
+		go controllers.NetlinkProcessor(context.TODO(), ch, c)
 	}
 
 	setupLog.Info("starting manager")
