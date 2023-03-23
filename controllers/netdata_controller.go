@@ -174,11 +174,12 @@ func (r *NetdataReconciler) kealease(apiUrl string, ipv int) []Lease {
 }
 
 type netdataconf struct {
-	Interval    int               `yaml:"interval"`
-	TTL         int               `yaml:"ttl"`
-	KeaApi      []string          `yaml:"dhcp"`
-	IPNamespace string            `default:"default" yaml:"ipnamespace"`
-	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
+	Interval          int               `yaml:"interval"`
+	TTL               int               `yaml:"ttl"`
+	KeaApi            []string          `yaml:"dhcp"`
+	IPNamespace       string            `default:"default" yaml:"ipnamespace"`
+	SubnetLabel       map[string]string `yaml:"subnetLabelSelector"`
+	NetlinkInterfaces []string          `yaml:"netlinkInterfaces"`
 }
 
 var Netdataconf netdataconf
@@ -371,8 +372,15 @@ func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP) {
 	subnetList := c.getSubnets()
 	// select subnet by ip and ip mask
 	var subnet v1alpha1.Subnet
+
 	for _, k := range subnetList.Items {
 		log.Printf("               CHECK subnet from subnetlist: %s\n", k.ObjectMeta.Name)
+
+		// TODO: This is temporary code to limit ip object creation in test namespace, to be removed later
+		if k.ObjectMeta.Namespace != c.IPNamespace {
+			continue
+		}
+
 		if k.Spec.CIDR != nil {
 			subnetAddr := k.Spec.CIDR.String()
 			_, subnetnetA, _ := net.ParseCIDR(subnetAddr)
@@ -983,8 +991,22 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 
 }
 
-func NetlinkListener(ctx context.Context, ch chan NetdataMap) {
+func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf) {
 	fmt.Println("starting netlink listener")
+
+	// Find out LinkIndex of the required interfaces
+	interfaceToListen := make(map[int]string)
+
+	for _, iface := range conf.NetlinkInterfaces {
+		i, err := netlink.LinkByName(iface)
+		if err != nil {
+			log.Printf("failed to look up interface %s: %s", iface, err)
+			continue
+		}
+		interfaceToListen[i.Attrs().Index] = iface
+
+	}
+
 	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
 	defer close(done)
@@ -994,6 +1016,12 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap) {
 	}
 
 	for data := range chNetlink {
+
+		// ignore IPs from other interfaces
+		if _, found := interfaceToListen[data.Neigh.LinkIndex]; !found {
+			continue
+		}
+
 		ip := data.Neigh.IP.String()
 
 		// ignore empty IP || IPv4 || link local address

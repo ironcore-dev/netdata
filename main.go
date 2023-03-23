@@ -126,7 +126,7 @@ func main() {
 	netSource := os.Getenv("NETSOURCE")
 	if netSource == "netlink" {
 		ch := make(chan controllers.NetdataMap, 1000)
-		go controllers.NetlinkListener(context.TODO(), ch)
+		go controllers.NetlinkListener(context.TODO(), ch, c)
 		go controllers.NetlinkProcessor(context.TODO(), ch, c)
 	}
 
