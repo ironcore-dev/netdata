@@ -31,7 +31,6 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -121,14 +120,14 @@ func main() {
 	// +kubebuilder:scaffold:builder
 	// get configmap data
 
-	c := controllers.GetConf()
-	// start netlink listener and processor
-	netSource := os.Getenv("NETSOURCE")
-	if netSource == "netlink" {
-		ch := make(chan controllers.NetdataMap, 1000)
-		go controllers.NetlinkListener(context.TODO(), ch, c)
-		go controllers.NetlinkProcessor(context.TODO(), ch, c)
-	}
+	// c := controllers.GetConf()
+	// // start netlink listener and processor
+	// netSource := os.Getenv("NETSOURCE")
+	// if netSource == "netlink" {
+	// 	ch := make(chan controllers.NetdataMap, 1000)
+	// 	go controllers.NetlinkListener(context.TODO(), ch, c)
+	// 	go controllers.NetlinkProcessor(context.TODO(), ch, c)
+	// }
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
