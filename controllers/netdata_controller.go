@@ -368,6 +368,79 @@ func contains(s []v1alpha1.IP, elem v1alpha1.IP) bool {
 	return false
 }
 
+func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipamv1alpha1.Subnet) {
+	kubeconfig := kubeconfigCreate()
+
+	cs, _ := clientset.NewForConfig(kubeconfig)
+
+	log.Printf("Selected subnet with ip: %+v\n\n\n", subnet.ObjectMeta.Name)
+
+	if subnet.ObjectMeta.Name == "" {
+		log.Printf("\nNOT FOUND proper subnet. skipped.: %+v\n", ip)
+		return
+	}
+	ip.Spec.Subnet.Name = subnet.ObjectMeta.Name
+	ip.ObjectMeta.Namespace = subnet.ObjectMeta.Namespace
+
+	// list of ip for delete
+	var deleteIPS []v1alpha1.IP
+	var notDeleteIPS []v1alpha1.IP
+	var updateLabelsIPS []v1alpha1.IP
+
+	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
+	deleteIPS, notDeleteIPS, updateLabelsIPS = checkDuplicateMac(ctx, ip, client, deleteIPS, notDeleteIPS, updateLabelsIPS)
+	// remove ip duplication
+	deleteIPS = checkDuplicateIP(ctx, ip, client, deleteIPS)
+
+	// delete objects
+	for delindex := range deleteIPS {
+		existedIP := deleteIPS[delindex]
+		if contains(notDeleteIPS, existedIP) {
+			log.Printf("not deleted  %+s because it is in not_delete_array \n\n", existedIP.ObjectMeta.Name)
+		} else {
+			err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
+			if err != nil {
+				log.Printf("ERROR!!  delete ips %+v error +%v \n\n", existedIP, err.Error())
+			}
+			log.Printf("DELETED ips %s \n\n", existedIP.ObjectMeta.Name)
+		}
+	}
+
+	// update labels
+	for upindex := range updateLabelsIPS {
+		existedIP := updateLabelsIPS[upindex]
+		existedIP.ObjectMeta.Labels["origin"] = os.Getenv("NETSOURCE")
+		updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
+		if err != nil {
+			log.Printf("update error +%v ", err.Error())
+		}
+		log.Printf("Updated LABELs IP. +%v ", updatedIP)
+	}
+
+	// create ip with subnet
+	if len(notDeleteIPS) == 0 {
+		getk8sObject, err := client.Get(ctx, ip.ObjectMeta.Name, v1.GetOptions{})
+		if err != nil {
+			log.Printf("get error +%v ", err.Error())
+		}
+		if err != nil && getk8sObject.ObjectMeta.Name != "" {
+			updatedIP, err := client.Update(ctx, &ip, v1.UpdateOptions{})
+			if err != nil {
+				log.Printf("update error +%v ", err.Error())
+			}
+			log.Printf("Updated IP. +%v ", updatedIP)
+
+		} else {
+			createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
+			if err != nil {
+				log.Printf("create error +%v ", err.Error())
+			}
+			log.Printf("Created IP. +%s ", createdIP.ObjectMeta.Name)
+		}
+	}
+
+}
+
 func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP) {
 	kubeconfig := kubeconfigCreate()
 
@@ -581,7 +654,7 @@ func createNetCRD(mv NetdataSpec, conf *netdataconf, ctx context.Context, r *Net
 	createIPAM(conf, ctx, *ipIPAM)
 }
 
-func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context) {
+func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context, subnet *ipamv1alpha1.Subnet) {
 	macLow := strings.ToLower(mv.MACAddress)
 	mv.MACAddress = macLow
 
@@ -614,7 +687,7 @@ func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context) {
 		},
 	}
 
-	createIPAM(conf, ctx, *ipIPAM)
+	createIPAMNew(conf, ctx, *ipIPAM, subnet)
 }
 func optStr(o ndp.Option) string {
 	switch o := o.(type) {
@@ -985,12 +1058,12 @@ func getIps(origin string) []v1alpha1.IP {
 	return ipList.Items
 }
 
-func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf) {
+func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
 	fmt.Println("starting netlink processor")
 
 	for entity := range ch {
 		for _, v := range entity {
-			createNetCRDNew(v, conf, ctx)
+			createNetCRDNew(v, conf, ctx, subnet)
 		}
 	}
 
@@ -999,7 +1072,7 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
 	fmt.Println("starting netlink listener")
 
-	// Find out LinkIndex of the required interfaces
+	// Find and store LinkIndex of the required interfaces
 	interfaceToListen := make(map[int]string)
 
 	for _, iface := range conf.NetlinkInterfaces {
@@ -1014,14 +1087,21 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 
 	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
-	defer close(done)
 	if err := netlink.NeighSubscribe(chNetlink, done); err != nil {
 		fmt.Printf("Netlink listener subscription failed, %v", err)
 		return
 	}
 
+	// If we already have a netlink listener running for a subnet, do not create new listener
+	val, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+	if ok && (val != nil) {
+		close(ch)
+		return
+	}
+
 	// store netlink listner subnet name and closing channel
 	SubnetNetlinkListener[subnet.Name] = done
+
 	for data := range chNetlink {
 
 		// ignore IPs from other interfaces
@@ -1060,6 +1140,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 		ch <- m
 		//fmt.Println("added to channel ", "ipv6 is ", ip, " mac is ", mac)
 	}
+	close(ch)
 }
 
 func ndpProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch chan NetdataMap, wg *sync.WaitGroup) {
@@ -1373,10 +1454,22 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	case "netlink":
 		// TODO: This is temporary code to limit ip object creation in test namespace, to be removed later
 		if subnet.ObjectMeta.Namespace == c.IPNamespace {
+
+			// we only create netlink listener per subnet, so ignore multiple reconcile for a subnet
 			_, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
 			if !ok {
+				// Apply lock to avoid race condition as you may get multiple requests for a subnet
+				var mu sync.Mutex
+				mu.Lock()
+				SubnetNetlinkListener[subnet.ObjectMeta.Name] = nil
+				mu.Unlock()
 				go NetlinkListener(context.TODO(), chNetlink, &c, &subnet)
-				go NetlinkProcessor(context.TODO(), chNetlink, &c)
+				go NetlinkProcessor(context.TODO(), chNetlink, &c, &subnet)
+			} else {
+				// TODO : insert a logic if subnet gets deleted
+				fmt.Println("entrering subnet again ...")
+				ch1 := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+				close(ch1)
 			}
 
 		}
