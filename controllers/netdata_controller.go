@@ -69,6 +69,7 @@ import (
 	"github.com/onmetal/ipam/clientset"
 	clienta1 "github.com/onmetal/ipam/clientset/v1alpha1"
 
+	ipamv1alpha1 "github.com/onmetal/ipam/api/v1alpha1"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
@@ -78,6 +79,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
+
+var SubnetNetlinkListener = make(map[string]chan struct{})
 
 var errRetry = errors.New("retry")
 
@@ -190,7 +193,9 @@ func GetConf() *netdataconf {
 }
 
 func (c *netdataconf) getConf() *netdataconf {
-	yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
+	//yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
+	yamlFile, err := os.ReadFile("/home/rp/go/src/netdata/config/default/netdata-config.yaml")
+
 	if err != nil {
 		log.Fatalf("yamlFile.Get err   #%v ", err)
 		os.Exit(21)
@@ -991,7 +996,7 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 
 }
 
-func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf) {
+func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
 	fmt.Println("starting netlink listener")
 
 	// Find out LinkIndex of the required interfaces
@@ -1015,6 +1020,8 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf)
 		return
 	}
 
+	// store netlink listner subnet name and closing channel
+	SubnetNetlinkListener[subnet.Name] = done
 	for data := range chNetlink {
 
 		// ignore IPs from other interfaces
@@ -1022,8 +1029,18 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf)
 			continue
 		}
 
+		// ignore IPs from different subnet
 		ip := data.Neigh.IP.String()
 
+		if subnet.Spec.CIDR != nil {
+			subnetAddr := subnet.Spec.CIDR.String()
+			_, subnetnetA, _ := net.ParseCIDR(subnetAddr)
+			ipcur := net.ParseIP(ip)
+			if !subnetnetA.Contains(ipcur) {
+				log.Printf("not fit \nip: %+v\nsubnet: %+v\n\n\n", ipcur, subnetnetA)
+				continue
+			}
+		}
 		// ignore empty IP || IPv4 || link local address
 		if ip == "::" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
 			continue
@@ -1316,6 +1333,13 @@ func writef(sw io.StringWriter, format string, a ...interface{}) {
 // +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet/status,verbs=get
 func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = r.Log.WithValues("netdata", req.NamespacedName)
+
+	var subnet ipamv1alpha1.Subnet
+	err := r.Get(ctx, req.NamespacedName, &subnet)
+	if err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get Subnet: %w", err))
+	}
+
 	mergeRes := make(NetdataMap)
 
 	// get configmap data
@@ -1325,6 +1349,8 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	//	fmt.Printf("runtime.GOMAXPROC() = %+v \n", runtime.GOMAXPROC)
 	r.Log.V(1).Info("\nMergeRes init state.", "mergeRes", mergeRes)
 	ch := make(chan NetdataMap, 1000)
+
+	chNetlink := make(chan NetdataMap, 1000)
 
 	wg := sync.WaitGroup{}
 	netSource := os.Getenv("NETSOURCE")
@@ -1345,7 +1371,15 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
 	case "netlink":
+		// TODO: This is temporary code to limit ip object creation in test namespace, to be removed later
+		if subnet.ObjectMeta.Namespace == c.IPNamespace {
+			_, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+			if !ok {
+				go NetlinkListener(context.TODO(), chNetlink, &c, &subnet)
+				go NetlinkProcessor(context.TODO(), chNetlink, &c)
+			}
 
+		}
 	default:
 		fmt.Printf("\nRequire define proper NETSOURCE environment variable. current NETSOURCE is +%v \n", netSource)
 		os.Exit(11)
