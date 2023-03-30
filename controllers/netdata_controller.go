@@ -193,8 +193,8 @@ func GetConf() *netdataconf {
 }
 
 func (c *netdataconf) getConf() *netdataconf {
-	//yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
-	yamlFile, err := os.ReadFile("/home/rp/go/src/netdata/config/default/netdata-config.yaml")
+	yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
+	//yamlFile, err := os.ReadFile("/home/rp/go/src/netdata/config/default/netdata-config.yaml")
 
 	if err != nil {
 		log.Fatalf("yamlFile.Get err   #%v ", err)
