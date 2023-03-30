@@ -384,31 +384,24 @@ func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *
 
 	// list of ip for delete
 	var deleteIPS []v1alpha1.IP
-	var notDeleteIPS []v1alpha1.IP
 	var updateLabelsIPS []v1alpha1.IP
 
 	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
-	deleteIPS, notDeleteIPS, updateLabelsIPS = checkDuplicateMac(ctx, ip, client, deleteIPS, notDeleteIPS, updateLabelsIPS)
+	deleteIPS, updateLabelsIPS = checkDuplicateMacNew(ctx, ip, client, deleteIPS, updateLabelsIPS)
 	// remove ip duplication
 	deleteIPS = checkDuplicateIP(ctx, ip, client, deleteIPS)
 
 	// delete objects
-	for delindex := range deleteIPS {
-		existedIP := deleteIPS[delindex]
-		if contains(notDeleteIPS, existedIP) {
-			log.Printf("not deleted  %+s because it is in not_delete_array \n\n", existedIP.ObjectMeta.Name)
-		} else {
-			err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
-			if err != nil {
-				log.Printf("ERROR!!  delete ips %+v error +%v \n\n", existedIP, err.Error())
-			}
-			log.Printf("DELETED ips %s \n\n", existedIP.ObjectMeta.Name)
+	for _, existedIP := range deleteIPS {
+		err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
+		if err != nil {
+			log.Printf("ERROR!!  delete ips %+v error +%v \n\n", existedIP, err.Error())
 		}
+		log.Printf("DELETED ips %s \n\n", existedIP.ObjectMeta.Name)
 	}
 
 	// update labels
-	for upindex := range updateLabelsIPS {
-		existedIP := updateLabelsIPS[upindex]
+	for _, existedIP := range updateLabelsIPS {
 		existedIP.ObjectMeta.Labels["origin"] = os.Getenv("NETSOURCE")
 		updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
 		if err != nil {
@@ -418,27 +411,11 @@ func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *
 	}
 
 	// create ip with subnet
-	if len(notDeleteIPS) == 0 {
-		getk8sObject, err := client.Get(ctx, ip.ObjectMeta.Name, v1.GetOptions{})
-		if err != nil {
-			log.Printf("get error +%v ", err.Error())
-		}
-		if err != nil && getk8sObject.ObjectMeta.Name != "" {
-			updatedIP, err := client.Update(ctx, &ip, v1.UpdateOptions{})
-			if err != nil {
-				log.Printf("update error +%v ", err.Error())
-			}
-			log.Printf("Updated IP. +%v ", updatedIP)
-
-		} else {
-			createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
-			if err != nil {
-				log.Printf("create error +%v ", err.Error())
-			}
-			log.Printf("Created IP. +%s ", createdIP.ObjectMeta.Name)
-		}
+	createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
+	if err != nil {
+		log.Printf("create error +%v ", err.Error())
 	}
-
+	log.Printf("Created IP. +%s ", createdIP.ObjectMeta.Name)
 }
 
 func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP) {
@@ -579,6 +556,45 @@ func checkDuplicateMac(ctx context.Context, ip v1alpha1.IP, client clienta1.IPIn
 		}
 	}
 	return deleteIPS, notDeleteIPS, updateLabelsIPS
+}
+
+func checkDuplicateMacNew(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface, deleteIPS []v1alpha1.IP, updateLabelsIPS []v1alpha1.IP) ([]v1alpha1.IP, []v1alpha1.IP) {
+	// if (do we have object with different IP address and same origin)
+	//    ->  delete object
+	labelsIPS := make(map[string]string)
+	labelsIPS["mac"] = strings.Split(ip.ObjectMeta.GenerateName, "-")[0]
+
+	labelSelectorIPS := metav1.LabelSelector{MatchLabels: labelsIPS}
+	ipsListOptions := metav1.ListOptions{
+		LabelSelector: labels.Set(labelSelectorIPS.MatchLabels).String(),
+		Limit:         100,
+	}
+	ipsList, _ := client.List(ctx, ipsListOptions)
+	for ipindex := range ipsList.Items {
+		existedIP := ipsList.Items[ipindex]
+		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
+			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
+				log.Printf("labels for current %s  existed Labels:  %+v \n\n", existedIP.ObjectMeta.Name, existedIP.ObjectMeta.Labels)
+			} else {
+				// update- add label origin-os.Getenv("NETSOURCE")
+				if existedIP.ObjectMeta.Labels["origin"] != "kea" {
+					log.Printf("add to update labels to current origin %+v \n\n", existedIP.ObjectMeta.Name)
+					updateLabelsIPS = append(updateLabelsIPS, existedIP)
+				}
+			}
+		} else {
+			log.Printf("existedIP.Spec.IP != ip.Spec.IP\n  %+v != %+v \n\n", existedIP.Spec.IP, ip.Spec.IP)
+			// ndp do not mix with nmap and kea
+			if existedIP.Spec.IP.Net.Is6() == ip.Spec.IP.Net.Is6() {
+				// mac and origin are same, but ip is different - delete
+				if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
+					log.Printf("add to delete list %+v \n\n", existedIP.ObjectMeta.Name)
+					deleteIPS = append(deleteIPS, existedIP)
+				}
+			}
+		}
+	}
+	return deleteIPS, updateLabelsIPS
 }
 
 func checkDuplicateIP(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface, deleteIPS []v1alpha1.IP) []v1alpha1.IP {
@@ -1414,7 +1430,6 @@ func writef(sw io.StringWriter, format string, a ...interface{}) {
 // +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet/status,verbs=get
 func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = r.Log.WithValues("netdata", req.NamespacedName)
-
 	var subnet ipamv1alpha1.Subnet
 	err := r.Get(ctx, req.NamespacedName, &subnet)
 	if err != nil {
@@ -1467,9 +1482,9 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				go NetlinkProcessor(context.TODO(), chNetlink, &c, &subnet)
 			} else {
 				// TODO : insert a logic if subnet gets deleted
-				fmt.Println("entrering subnet again ...")
-				ch1 := SubnetNetlinkListener[subnet.ObjectMeta.Name]
-				close(ch1)
+				log.Printf("entrering subnet again ..doing nothing")
+				//ch1 := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+				//close(ch1)
 			}
 
 		}
