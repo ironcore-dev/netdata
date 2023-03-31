@@ -1082,6 +1082,7 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 			createNetCRDNew(v, conf, ctx, subnet)
 		}
 	}
+	fmt.Println("netlink processor ended")
 
 }
 
@@ -1157,6 +1158,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 		//fmt.Println("added to channel ", "ipv6 is ", ip, " mac is ", mac)
 	}
 	close(ch)
+	fmt.Println("Netlink listener ended")
 }
 
 func ndpProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch chan NetdataMap, wg *sync.WaitGroup) {
@@ -1471,7 +1473,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if subnet.ObjectMeta.Namespace == c.IPNamespace {
 
 			// we only create netlink listener per subnet, so ignore multiple reconcile for a subnet
-			_, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+			ch, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
 			if !ok {
 				// Apply lock to avoid race condition as you may get multiple requests for a subnet
 				var mu sync.Mutex
@@ -1482,9 +1484,10 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				go NetlinkProcessor(context.TODO(), chNetlink, &c, &subnet)
 			} else {
 				// TODO : insert a logic if subnet gets deleted
-				log.Printf("entrering subnet again ..doing nothing")
-				//ch1 := SubnetNetlinkListener[subnet.ObjectMeta.Name]
-				//close(ch1)
+				if subnet.GetDeletionTimestamp() != nil && ch != nil {
+					fmt.Println("got a delete req.")
+					close(ch)
+				}
 			}
 
 		}
