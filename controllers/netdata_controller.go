@@ -692,7 +692,7 @@ func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context, sub
 	ipIPAM := &v1alpha1.IP{
 		ObjectMeta: v1.ObjectMeta{
 			GenerateName: crdname + "-" + os.Getenv("NETSOURCE") + "-",
-			Namespace:    "rahultest", // need to pick this from config file
+			Namespace:    conf.IPNamespace,
 			Labels:       labels,
 		},
 		Spec: v1alpha1.IPSpec{
@@ -1112,6 +1112,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 	// If we already have a netlink listener running for a subnet, do not create new listener
 	val, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
 	if ok && (val != nil) {
+		close(done)
 		close(ch)
 		return
 	}
