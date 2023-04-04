@@ -370,43 +370,107 @@ func contains(s []v1alpha1.IP, elem v1alpha1.IP) bool {
 
 func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipamv1alpha1.Subnet) {
 	kubeconfig := kubeconfigCreate()
-
 	cs, _ := clientset.NewForConfig(kubeconfig)
+	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
 
-	if subnet.ObjectMeta.Name == "" {
-		log.Printf("\nNOT FOUND proper subnet. skipped.: %+v\n", ip)
-		return
-	}
 	ip.Spec.Subnet.Name = subnet.ObjectMeta.Name
 	ip.ObjectMeta.Namespace = subnet.ObjectMeta.Namespace
 
 	createNewIP := true
-	// MAC same, IP different - delete existing object
-	// MAC same, IP same - update/ignore
-	// MAC different, IP same - delete existing object
+
+	//If MAC are same and IP is different - delete existing object
+	handleDuplicateMacs(ctx, ip, client, &createNewIP)
+
+	// If ips are same but mac is different delete existing object
+	handleDuplicateIPs(ctx, ip, client)
+
+	// create new IP
+	if createNewIP {
+		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
+		ip.OwnerReferences = append(ip.OwnerReferences, ref)
+		createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
+		if err != nil {
+			log.Printf("Create IP error +%v ", err.Error())
+		}
+		log.Printf("Created IP object : %s \n", createdIP.ObjectMeta.Name)
+
+	}
+}
+
+func CheckIPFromNetlinkAndKea(ips *ipamv1alpha1.IPList, ctx context.Context, ip v1alpha1.IP) string {
+	// If two IP objects exists one from kia and another from netlink, this function will return netlink IP for deletion
+
+	m := make(map[string]string)
+
+	for _, existedIP := range ips.Items {
+		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
+			if existedIP.ObjectMeta.Labels["origin"] == "kea" {
+				m["kea"] = existedIP.ObjectMeta.Name
+			}
+			if existedIP.ObjectMeta.Labels["origin"] == "netlink" {
+				m["netlink"] = existedIP.ObjectMeta.Name
+			}
+		}
+	}
+
+	if val, ok := m["netlink"]; ok {
+		if _, ok := m["kea"]; ok {
+			return val
+		}
+	}
+	return ""
+}
+
+func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface, createNewIP *bool) {
 	mac := strings.Split(ip.ObjectMeta.GenerateName, "-")[0]
-	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
 	labelsIPS := make(map[string]string)
 	labelsIPS["mac"] = mac
-
 	labelSelectorIPS := metav1.LabelSelector{MatchLabels: labelsIPS}
 	ipsListOptions := metav1.ListOptions{
 		LabelSelector: labels.Set(labelSelectorIPS.MatchLabels).String(),
 		Limit:         100,
 	}
 	ipsList, _ := client.List(ctx, ipsListOptions)
+
+	// Special case : If IP object exists from both kea and Netlink then delete Netlink IP
+	deleteIP := CheckIPFromNetlinkAndKea(ipsList, ctx, ip)
+	if deleteIP != "" {
+		*createNewIP = false // do not create new IP from Netlink
+		err := client.Delete(ctx, deleteIP, v1.DeleteOptions{})
+		if err != nil {
+			log.Printf("ERROR!!  delete ips %+v error +%v \n", deleteIP, err.Error())
+		} else {
+			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", i.ObjectMeta.Name)
+		}
+		// Refresh the list, since we have deleted a item
+		ipsList, _ = client.List(ctx, ipsListOptions)
+	}
+
 	for _, existedIP := range ipsList.Items {
 		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
-			// if this ip exists and you own it -> update lifetime; if ip exists and you DO NOT own it -> ignore
-			log.Printf("existing object : %+v", existedIP)
-			log.Printf("IP = %+v , Already exists, Need to update lifetime\n", existedIP.Spec.IP)
-			log.Println("--------------------------")
-			log.Println(existedIP.OwnerReferences)
-			log.Println("--------------------------")
-			createNewIP = false
+			// If IP object with same IP and same MAC already exists from Kia, do not create new IP from Netlink
+			if existedIP.ObjectMeta.Labels["origin"] == "kea" {
+				*createNewIP = false
+			}
+
+			// If IP object with same IP and same MAC already exists from Netlink and you own it, update lifetime
+			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
+				for _, v := range existedIP.OwnerReferences {
+					if v.Name == "netdata.onmetal.de/ip" {
+						existedIP.Status.Timestamp = time.Now().Unix()
+						updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
+						if err != nil {
+							log.Printf("Update error : +%v ", err.Error())
+						}
+						log.Printf("Updated timestamp of IP object: %s \n", updatedIP.ObjectMeta.Name)
+					}
+				}
+
+			}
+
 		} else {
+			// If IP object with different IP and same MAC already exists from Netlink, delete existing object
 			log.Printf("existing IP != new IP , %+v != %+v \n", existedIP.Spec.IP, ip.Spec.IP)
-			// mac and origin are same, but ip is different - delete
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
 				if err != nil {
@@ -419,7 +483,11 @@ func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *
 		}
 	}
 
+}
+
+func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface) {
 	// If ips are same but mac is different delete existing object
+	mac := strings.Split(ip.ObjectMeta.GenerateName, "-")[0]
 	labelsIPS_ip := make(map[string]string)
 	labelsIPS_ip["ip"] = ip.Spec.IP.String()
 
@@ -433,23 +501,11 @@ func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *
 		if existedIP.Spec.IP.Equal(ip.Spec.IP) && existedIP.ObjectMeta.Labels["mac"] != mac {
 			err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
 			if err != nil {
-				log.Printf("ERROR!!  delete ips %+v error +%v \n\n", existedIP, err.Error())
+				log.Printf("ERROR!! delete ips %+v error +%v \n\n", existedIP, err.Error())
 			} else {
-				log.Printf("DELETED ips %s \n\n", existedIP.ObjectMeta.Name)
+				log.Printf("Duplicate IP address exist, deleted IP object : %s \n", existedIP.ObjectMeta.Name)
 			}
 		}
-	}
-
-	// create new IP
-	if createNewIP {
-		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
-		ip.OwnerReferences = append(ip.OwnerReferences, ref)
-		createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
-		if err != nil {
-			log.Printf("create error +%v ", err.Error())
-		}
-		log.Printf("Created IP object : %s \n", createdIP.ObjectMeta.Name)
-
 	}
 }
 
@@ -697,6 +753,7 @@ func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context, sub
 			},
 			IP: ipaddr,
 		},
+		Status: v1alpha1.IPStatus{Timestamp: time.Now().Unix()},
 	}
 
 	createIPAMNew(conf, ctx, *ipIPAM, subnet)
@@ -1432,6 +1489,9 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	err := r.Get(ctx, req.NamespacedName, &subnet)
 	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get Subnet: %w", err))
+	}
+	if subnet.ObjectMeta.Name == "" {
+		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get subnet.ObjectMeta.Name: %w", err))
 	}
 
 	mergeRes := make(NetdataMap)
