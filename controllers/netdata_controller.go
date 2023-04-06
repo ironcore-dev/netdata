@@ -368,7 +368,7 @@ func contains(s []v1alpha1.IP, elem v1alpha1.IP) bool {
 	return false
 }
 
-func createIPAMNew(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipamv1alpha1.Subnet) {
+func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipamv1alpha1.Subnet) {
 	kubeconfig := kubeconfigCreate()
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
@@ -440,7 +440,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 		if err != nil {
 			log.Printf("ERROR!!  delete ips %+v error +%v \n", deleteIP, err.Error())
 		} else {
-			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", i.ObjectMeta.Name)
+			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", deleteIP)
 		}
 		// Refresh the list, since we have deleted a item
 		ipsList, _ = client.List(ctx, ipsListOptions)
@@ -448,11 +448,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 
 	for _, existedIP := range ipsList.Items {
 		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
-			// If IP object with same IP and same MAC already exists from Kia, do not create new IP from Netlink
-			if existedIP.ObjectMeta.Labels["origin"] == "kea" {
-				*createNewIP = false
-			}
-
+			*createNewIP = false
 			// If IP object with same IP and same MAC already exists from Netlink and you own it, update lifetime
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				for _, v := range existedIP.OwnerReferences {
@@ -722,7 +718,7 @@ func createNetCRD(mv NetdataSpec, conf *netdataconf, ctx context.Context, r *Net
 	createIPAM(conf, ctx, *ipIPAM)
 }
 
-func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context, subnet *ipamv1alpha1.Subnet) {
+func createNetCRDNetlink(mv NetdataSpec, conf *netdataconf, ctx context.Context, subnet *ipamv1alpha1.Subnet) {
 	macLow := strings.ToLower(mv.MACAddress)
 	mv.MACAddress = macLow
 
@@ -756,7 +752,7 @@ func createNetCRDNew(mv NetdataSpec, conf *netdataconf, ctx context.Context, sub
 		Status: v1alpha1.IPStatus{Timestamp: time.Now().Unix()},
 	}
 
-	createIPAMNew(conf, ctx, *ipIPAM, subnet)
+	createIPAMNetlink(conf, ctx, *ipIPAM, subnet)
 }
 func optStr(o ndp.Option) string {
 	switch o := o.(type) {
@@ -1132,7 +1128,7 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 
 	for entity := range ch {
 		for _, v := range entity {
-			createNetCRDNew(v, conf, ctx, subnet)
+			createNetCRDNetlink(v, conf, ctx, subnet)
 		}
 	}
 	fmt.Println("netlink processor ended")
