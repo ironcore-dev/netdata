@@ -117,6 +117,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Netdata")
 		os.Exit(1)
 	}
+	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
