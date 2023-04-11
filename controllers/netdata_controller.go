@@ -41,6 +41,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -453,7 +454,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				for _, v := range existedIP.OwnerReferences {
 					if v.Name == "netdata.onmetal.de/ip" {
-						existedIP.Status.Timestamp = time.Now().Unix()
+						existedIP.Labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
 						updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
 						if err != nil {
 							log.Printf("Update error : +%v ", err.Error())
@@ -474,7 +475,9 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 				} else {
 					log.Printf("Deleted IP object : %s \n", existedIP.ObjectMeta.Name)
 				}
-
+				// IP object from kea exists, hence do not create new netlink IP object
+			} else if existedIP.ObjectMeta.Labels["origin"] == "kea" {
+				*createNewIP = false
 			}
 		}
 	}
@@ -734,7 +737,7 @@ func createNetCRDNetlink(mv NetdataSpec, conf *netdataconf, ctx context.Context,
 	}
 	labels["origin"] = os.Getenv("NETSOURCE")
 	labels["mac"] = crdname
-
+	labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
 	ipaddr, _ := v1alpha1.IPAddrFromString(mv.Addresses[0].IPS[0])
 
 	ipIPAM := &v1alpha1.IP{
@@ -749,7 +752,6 @@ func createNetCRDNetlink(mv NetdataSpec, conf *netdataconf, ctx context.Context,
 			},
 			IP: ipaddr,
 		},
-		Status: v1alpha1.IPStatus{Timestamp: time.Now().Unix()},
 	}
 
 	createIPAMNetlink(conf, ctx, *ipIPAM, subnet)
