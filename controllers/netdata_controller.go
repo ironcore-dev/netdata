@@ -521,11 +521,6 @@ func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP) {
 	for _, k := range subnetList.Items {
 		log.Printf("               CHECK subnet from subnetlist: %s\n", k.ObjectMeta.Name)
 
-		// TODO: This is temporary code to limit ip object creation in test namespace, to be removed later
-		if k.ObjectMeta.Namespace != c.IPNamespace {
-			continue
-		}
-
 		if k.Spec.CIDR != nil {
 			subnetAddr := k.Spec.CIDR.String()
 			_, subnetnetA, _ := net.ParseCIDR(subnetAddr)
@@ -1523,28 +1518,25 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
 	case "netlink":
-		// TODO: This is temporary code to limit ip object creation in test namespace, to be removed later
-		if subnet.ObjectMeta.Namespace == c.IPNamespace {
-
-			// we only create netlink listener per subnet, so ignore multiple reconcile for a subnet
-			ch, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
-			if !ok {
-				// Apply lock to avoid race condition as you may get multiple requests for a subnet
-				var mu sync.Mutex
-				mu.Lock()
-				SubnetNetlinkListener[subnet.ObjectMeta.Name] = nil
-				mu.Unlock()
-				go NetlinkListener(context.TODO(), chNetlink, &c, &subnet)
-				go NetlinkProcessor(context.TODO(), chNetlink, &c, &subnet)
-			} else {
-				// TODO : insert a logic if subnet gets deleted
-				if subnet.GetDeletionTimestamp() != nil && ch != nil {
-					fmt.Println("got a delete req.")
-					close(ch)
-				}
+		// we only create netlink listener per subnet, so ignore multiple reconcile for a subnet
+		ch, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
+		if !ok {
+			// Apply lock to avoid race condition as you may get multiple requests for a subnet
+			var mu sync.Mutex
+			mu.Lock()
+			SubnetNetlinkListener[subnet.ObjectMeta.Name] = nil
+			mu.Unlock()
+			go NetlinkListener(context.Background(), chNetlink, &c, &subnet)
+			go NetlinkProcessor(context.Background(), chNetlink, &c, &subnet)
+		} else {
+			// Netlink listener is already created and you are here again for subnet deletion, stop the listener.
+			if subnet.GetDeletionTimestamp() != nil && ch != nil {
+				fmt.Println("got a delete subnet request")
+				close(ch)
+				delete(SubnetNetlinkListener, subnet.ObjectMeta.Name)
 			}
-
 		}
+
 	default:
 		fmt.Printf("\nRequire define proper NETSOURCE environment variable. current NETSOURCE is +%v \n", netSource)
 		os.Exit(11)
