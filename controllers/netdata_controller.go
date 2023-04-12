@@ -371,13 +371,13 @@ func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subn
 
 	createNewIP := true
 
-	//If MAC are same and IP is different - delete existing object
+	//If MACs  are the same and IP is different - delete the existing object
 	handleDuplicateMacs(ctx, ip, client, &createNewIP)
 
-	// If ips are same but mac is different delete existing object
+	// If IPs are the same but MAC is different delete the existing object
 	handleDuplicateIPs(ctx, ip, client)
 
-	// create new IP
+	// Create new IP
 	if createNewIP {
 		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
 		ip.OwnerReferences = append(ip.OwnerReferences, ref)
@@ -391,7 +391,7 @@ func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subn
 }
 
 func CheckIPFromNetlinkAndKea(ips *ipamv1alpha1.IPList, ctx context.Context, ip v1alpha1.IP) string {
-	// If two IP objects exists one from kia and another from netlink, this function will return netlink IP for deletion
+	// If two IP objects exist one from kia and another from netlink, this function will return netlink IP for deletion
 
 	m := make(map[string]string)
 
@@ -425,7 +425,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 	}
 	ipsList, _ := client.List(ctx, ipsListOptions)
 
-	// Special case : If IP object exists from both kea and Netlink then delete Netlink IP
+	// Special case: If an IP object exists from both kea and Netlink then delete Netlink IP
 	deleteIP := CheckIPFromNetlinkAndKea(ipsList, ctx, ip)
 	if deleteIP != "" {
 		*createNewIP = false // do not create new IP from Netlink
@@ -435,14 +435,14 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 		} else {
 			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", deleteIP)
 		}
-		// Refresh the list, since we have deleted a item
+		// Refresh the list, since we have deleted an item
 		ipsList, _ = client.List(ctx, ipsListOptions)
 	}
 
 	for _, existedIP := range ipsList.Items {
 		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
 			*createNewIP = false
-			// If IP object with same IP and same MAC already exists from Netlink and you own it, update lifetime
+			// If an IP object with the same IP and same MAC already exists from Netlink and you own it, update the lifetime
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				for _, v := range existedIP.OwnerReferences {
 					if v.Name == "netdata.onmetal.de/ip" {
@@ -458,7 +458,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 			}
 
 		} else {
-			// If IP object with different IP and same MAC already exists from Netlink, delete existing object
+			// If an IP object with different IP and the same MAC already exists from Netlink, delete the existing object
 			log.Printf("existing IP != new IP , %+v != %+v \n", existedIP.Spec.IP, ip.Spec.IP)
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
@@ -477,7 +477,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 }
 
 func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface) {
-	// If ips are same but mac is different delete existing object
+	// If IPS is same but MAC is different delete the existing object
 	mac := strings.Split(ip.ObjectMeta.GenerateName, "-")[0]
 	labelsIPS_ip := make(map[string]string)
 	labelsIPS_ip["ip"] = ip.Spec.IP.String()
@@ -1155,17 +1155,17 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 		return
 	}
 
-	// store netlink listner subnet name and closing channel
+	// Store netlink listner subnet name and closing channel
 	SubnetNetlinkListener[subnet.Name] = done
 
 	for data := range chNetlink {
 
-		// ignore IPs from other interfaces
+		// Ignore IPs from other interfaces
 		if _, found := interfaceToListen[data.Neigh.LinkIndex]; !found {
 			continue
 		}
 
-		// ignore IPs from different subnet
+		// Ignore IPs from different subnet
 		ip := data.Neigh.IP.String()
 
 		if subnet.Spec.CIDR != nil {
@@ -1176,7 +1176,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 				continue
 			}
 		}
-		// ignore empty IP || IPv4 || link local address
+		// Ignore empty IP || IPv4 || link local address
 		if ip == "::" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
 			continue
 		}
@@ -1186,7 +1186,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 			continue
 		}
 
-		// prepare netDataMap and send on the channel
+		// Prepare netDataMap and send on the channel
 		m := make(NetdataMap)
 		mac := data.Neigh.HardwareAddr.String()
 
@@ -1508,7 +1508,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
 	case "netlink":
-		// we only create netlink listener per subnet, so ignore multiple reconcile for a subnet
+		// We only create netlink listener per subnet, so ignore multiple reconcile for a subnet
 		ch, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
 		if !ok {
 			// Apply lock to avoid race condition as you may get multiple requests for a subnet
