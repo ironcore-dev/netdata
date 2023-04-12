@@ -1113,19 +1113,19 @@ func getIps(origin string) []v1alpha1.IP {
 }
 
 func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
-	fmt.Println("starting netlink processor")
+	log.Printf("starting netlink processor")
 
 	for entity := range ch {
 		for _, v := range entity {
 			createNetCRDNetlink(v, conf, ctx, subnet)
 		}
 	}
-	fmt.Println("netlink processor ended")
+	log.Printf("netlink processor ended")
 
 }
 
 func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
-	fmt.Printf("starting netlink listener for subnet %s", subnet.Name)
+	log.Printf("starting netlink listener for subnet %s", subnet.Name)
 
 	// Find and store LinkIndex of the required interfaces
 	interfaceToListen := make(map[int]string)
@@ -1143,7 +1143,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
 	if err := netlink.NeighSubscribe(chNetlink, done); err != nil {
-		fmt.Printf("Netlink listener subscription failed, %v", err)
+		log.Printf("Netlink listener subscription failed, %v", err)
 		return
 	}
 
@@ -1191,12 +1191,10 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 		mac := data.Neigh.HardwareAddr.String()
 
 		m[mac] = newNetdataSpec(mac, ip, "", "ipv6")
-		//fmt.Println("Netlink ", "ipv6 is", ip, " mac is ", mac)
 		ch <- m
-		//fmt.Println("added to channel ", "ipv6 is ", ip, " mac is ", mac)
 	}
 	close(ch)
-	fmt.Println("Netlink listener ended")
+	log.Printf("Netlink listener ended")
 }
 
 func ndpProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch chan NetdataMap, wg *sync.WaitGroup) {
@@ -1523,7 +1521,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		} else {
 			// Netlink listener is already created and you are here again for subnet deletion, stop the listener.
 			if subnet.GetDeletionTimestamp() != nil && ch != nil {
-				fmt.Println("got a delete subnet request")
+				log.Printf("got a delete subnet request")
 				close(ch)
 				delete(SubnetNetlinkListener, subnet.ObjectMeta.Name)
 			}
