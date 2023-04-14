@@ -391,7 +391,7 @@ func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subn
 }
 
 func CheckIPFromNetlinkAndKea(ips *ipamv1alpha1.IPList, ctx context.Context, ip v1alpha1.IP) string {
-	// If two IP objects exist one from kia and another from netlink, this function will return netlink IP for deletion
+	// If two IP objects exist one from kea and another from netlink, this function will return netlink IP for deletion
 
 	m := make(map[string]string)
 
@@ -725,6 +725,7 @@ func createNetCRDNetlink(mv NetdataSpec, conf *netdataconf, ctx context.Context,
 	labels["origin"] = os.Getenv("NETSOURCE")
 	labels["mac"] = crdname
 	labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
+	labels["labelsubnet"] = conf.SubnetLabel["labelsubnet"]
 	ipaddr, _ := v1alpha1.IPAddrFromString(mv.Addresses[0].IPS[0])
 
 	ipIPAM := &v1alpha1.IP{
@@ -1127,19 +1128,6 @@ func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf
 func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
 	log.Printf("starting netlink listener for subnet %s", subnet.Name)
 
-	// Find and store LinkIndex of the required interfaces
-	interfaceToListen := make(map[int]string)
-
-	for _, iface := range conf.NetlinkInterfaces {
-		i, err := netlink.LinkByName(iface)
-		if err != nil {
-			log.Printf("failed to look up interface %s: %s", iface, err)
-			continue
-		}
-		interfaceToListen[i.Attrs().Index] = iface
-
-	}
-
 	chNetlink := make(chan netlink.NeighUpdate)
 	done := make(chan struct{})
 	if err := netlink.NeighSubscribe(chNetlink, done); err != nil {
@@ -1159,11 +1147,6 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 	SubnetNetlinkListener[subnet.Name] = done
 
 	for data := range chNetlink {
-
-		// Ignore IPs from other interfaces
-		if _, found := interfaceToListen[data.Neigh.LinkIndex]; !found {
-			continue
-		}
 
 		// Ignore IPs from different subnet
 		ip := data.Neigh.IP.String()
@@ -1508,6 +1491,13 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		go nmapProcess(&c, r, ctx, ch, &wg)
 		fmt.Printf("\nStarted nmap \n")
 	case "netlink":
+		// Skip subnets which do not have required label. e.g labelsubnet = oob
+		val, ok := subnet.Labels["labelsubnet"]
+		if !ok || val != c.SubnetLabel["labelsubnet"] {
+			errString := fmt.Sprintf("Labelsubnet do not match for subnet : %v", subnet.ObjectMeta.Name)
+			return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf(errString))
+		}
+
 		// We only create netlink listener per subnet, so ignore multiple reconcile for a subnet
 		ch, ok := SubnetNetlinkListener[subnet.ObjectMeta.Name]
 		if !ok {
