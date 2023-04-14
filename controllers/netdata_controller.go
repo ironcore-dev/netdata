@@ -178,12 +178,11 @@ func (r *NetdataReconciler) kealease(apiUrl string, ipv int) []Lease {
 }
 
 type netdataconf struct {
-	Interval          int               `yaml:"interval"`
-	TTL               int               `yaml:"ttl"`
-	KeaApi            []string          `yaml:"dhcp"`
-	IPNamespace       string            `default:"default" yaml:"ipnamespace"`
-	SubnetLabel       map[string]string `yaml:"subnetLabelSelector"`
-	NetlinkInterfaces []string          `yaml:"netlinkInterfaces"`
+	Interval    int               `yaml:"interval"`
+	TTL         int               `yaml:"ttl"`
+	KeaApi      []string          `yaml:"dhcp"`
+	IPNamespace string            `default:"default" yaml:"ipnamespace"`
+	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
 }
 
 func (c *netdataconf) getConf() *netdataconf {
