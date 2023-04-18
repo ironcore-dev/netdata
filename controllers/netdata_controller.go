@@ -488,7 +488,7 @@ func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPI
 	}
 	ipsList_ip, _ := client.List(ctx, ipsListOptions_ip)
 	for _, existedIP := range ipsList_ip.Items {
-		if existedIP.Spec.IP.Equal(ip.Spec.IP) && existedIP.ObjectMeta.Labels["mac"] != mac {
+		if existedIP.ObjectMeta.Labels["mac"] != mac {
 			err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
 			if err != nil {
 				log.Printf("ERROR!! delete ips %+v error +%v \n\n", existedIP, err.Error())
