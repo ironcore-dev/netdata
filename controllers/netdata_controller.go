@@ -453,26 +453,9 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 						log.Printf("Updated timestamp of IP object: %s \n", updatedIP.ObjectMeta.Name)
 					}
 				}
-
-			}
-
-		} else {
-			// If an IP object with different IP and the same MAC already exists from Netlink, delete the existing object
-			log.Printf("existing IP != new IP , %+v != %+v \n", existedIP.Spec.IP, ip.Spec.IP)
-			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
-				err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
-				if err != nil {
-					log.Printf("ERROR!!  delete ips %+v error +%v \n", existedIP, err.Error())
-				} else {
-					log.Printf("Deleted IP object : %s \n", existedIP.ObjectMeta.Name)
-				}
-				// IP object from kea exists, hence do not create new netlink IP object
-			} else if existedIP.ObjectMeta.Labels["origin"] == "kea" {
-				*createNewIP = false
 			}
 		}
 	}
-
 }
 
 func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface) {
@@ -1113,7 +1096,7 @@ func getIps(origin string) []v1alpha1.IP {
 }
 
 func NetlinkProcessor(ctx context.Context, ch chan NetdataMap, conf *netdataconf, subnet *ipamv1alpha1.Subnet) {
-	log.Printf("starting netlink processor")
+	log.Printf("starting netlink processor for subnet %s", subnet.Name)
 
 	for entity := range ch {
 		for _, v := range entity {
@@ -1149,6 +1132,7 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 
 		// Ignore IPs from different subnet
 		ip := data.Neigh.IP.String()
+		mac := data.Neigh.HardwareAddr.String()
 
 		if subnet.Spec.CIDR != nil {
 			subnetAddr := subnet.Spec.CIDR.String()
@@ -1158,8 +1142,8 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 				continue
 			}
 		}
-		// Ignore empty IP || IPv4 || link local address
-		if ip == "::" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
+		// Ignore empty IP || empty MAC || IPv4 || link local address
+		if ip == "::" || mac == "" || (IpVersion(ip) == "ipv4") || strings.HasPrefix(ip, "fe80") {
 			continue
 		}
 
@@ -1170,7 +1154,6 @@ func NetlinkListener(ctx context.Context, ch chan NetdataMap, conf *netdataconf,
 
 		// Prepare netDataMap and send on the channel
 		m := make(NetdataMap)
-		mac := data.Neigh.HardwareAddr.String()
 
 		m[mac] = newNetdataSpec(mac, ip, "", "ipv6")
 		ch <- m
@@ -1459,6 +1442,7 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get subnet.ObjectMeta.Name: %w", err))
 	}
 
+	log.Printf("Started reconciling for subnet : %v", subnet.ObjectMeta.Name)
 	mergeRes := make(NetdataMap)
 
 	// get configmap data
@@ -1493,7 +1477,8 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// Skip subnets which do not have required label. e.g labelsubnet = oob
 		val, ok := subnet.Labels["labelsubnet"]
 		if !ok || val != c.SubnetLabel["labelsubnet"] {
-			errString := fmt.Sprintf("Labelsubnet do not match for subnet : %v", subnet.ObjectMeta.Name)
+			errString := fmt.Sprintf("Not reconciling as Labelsubnet do not match for subnet : %v", subnet.ObjectMeta.Name)
+			log.Print(errString)
 			return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf(errString))
 		}
 
