@@ -374,7 +374,7 @@ func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subn
 	handleDuplicateMacs(ctx, ip, client, &createNewIP)
 
 	// If IPs are the same but MAC is different delete the existing object
-	handleDuplicateIPs(ctx, ip, client)
+	handleDuplicateIPs(ctx, ip, client, &createNewIP)
 
 	// Create new IP
 	if createNewIP {
@@ -458,7 +458,7 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 	}
 }
 
-func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface) {
+func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface, createNewIP *bool) {
 	// If IPS is same but MAC is different delete the existing object
 	mac := strings.Split(ip.ObjectMeta.GenerateName, "-")[0]
 	labelsIPS_ip := make(map[string]string)
@@ -472,12 +472,10 @@ func handleDuplicateIPs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPI
 	ipsList_ip, _ := client.List(ctx, ipsListOptions_ip)
 	for _, existedIP := range ipsList_ip.Items {
 		if existedIP.ObjectMeta.Labels["mac"] != mac {
-			err := client.Delete(ctx, existedIP.ObjectMeta.Name, v1.DeleteOptions{})
-			if err != nil {
-				log.Printf("ERROR!! delete ips %+v error +%v \n\n", existedIP, err.Error())
-			} else {
-				log.Printf("Duplicate IP address exist, deleted IP object : %s \n", existedIP.ObjectMeta.Name)
-			}
+			log.Printf("**************************************************************")
+			log.Printf("ERROR : Duplicate ip found, existing object : %v, new mac = %v", existedIP.ObjectMeta.Name, mac)
+			log.Printf("**************************************************************")
+			*createNewIP = false
 		}
 	}
 }
