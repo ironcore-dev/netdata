@@ -425,12 +425,24 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 			if existedIP.ObjectMeta.Labels["origin"] == os.Getenv("NETSOURCE") {
 				for _, v := range existedIP.OwnerReferences {
 					if v.Name == "netdata.onmetal.de/ip" {
-						existedIP.Labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
-						updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
+
+						t, err := strconv.ParseInt(existedIP.Labels["timestamp"], 10, 64)
 						if err != nil {
-							log.Printf("Update error : +%v ", err.Error())
+							log.Printf("Error in parsing timestamp : %s, IP object : %s", err, existedIP.ObjectMeta.Name)
 						}
-						log.Printf("Updated timestamp of IP object: %s \n", updatedIP.ObjectMeta.Name)
+						existing := time.Unix(t, 0)
+						current := time.Unix(time.Now().Unix(), 0)
+						diff := current.Sub(existing).Minutes()
+						// update timestamp if the last update is more than 2 min or there is no timestamp label
+						if (diff > 2) || (existedIP.Labels["timestamp"] == "") {
+							existedIP.Labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
+							updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
+							if err != nil {
+								log.Printf("Update error : +%v, IP object : %s ", err.Error(), updatedIP.ObjectMeta.Name)
+							} else {
+								log.Printf("Updated timestamp of IP object: %s \n", updatedIP.ObjectMeta.Name)
+							}
+						}
 					}
 				}
 			}
