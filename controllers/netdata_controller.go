@@ -430,11 +430,9 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 						if err != nil {
 							log.Printf("Error in parsing timestamp : %s, IP object : %s", err, existedIP.ObjectMeta.Name)
 						}
-						existing := time.Unix(t, 0)
-						current := time.Unix(time.Now().Unix(), 0)
-						diff := current.Sub(existing).Minutes()
-						// update timestamp if the last update is more than 2 min or there is no timestamp label
-						if (diff > 2) || (existedIP.Labels["timestamp"] == "") {
+
+						// update timestamp if the last update is more than 2 min (120 sec) or there is no timestamp label
+						if (time.Now().Unix()-t > 120) || (existedIP.Labels["timestamp"] == "") {
 							existedIP.Labels["timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
 							updatedIP, err := client.Update(ctx, &existedIP, v1.UpdateOptions{})
 							if err != nil {
