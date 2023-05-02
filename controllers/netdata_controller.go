@@ -343,7 +343,7 @@ func contains(s []v1alpha1.IP, elem v1alpha1.IP) bool {
 
 func IPCleaner(ctx context.Context, c *netdataconf, origin string) {
 
-	// This fucntion will run continuously after every 15 min.
+	// This loop will run infinitely after every 15 min.
 	for {
 		ips := getIps(origin)
 		for _, ip := range ips {
