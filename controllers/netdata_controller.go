@@ -159,11 +159,12 @@ func (r *NetdataReconciler) kealease(apiUrl string, ipv int) []Lease {
 }
 
 type netdataconf struct {
-	Interval    int               `yaml:"interval"`
-	TTL         int               `yaml:"ttl"`
-	KeaApi      []string          `yaml:"dhcp"`
-	IPNamespace string            `default:"default" yaml:"ipnamespace"`
-	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
+	Interval          int               `yaml:"interval"`
+	TTL               int               `yaml:"ttl"`
+	IpCleanerInterval int               `yaml:"ipCleanerInterval"`
+	KeaApi            []string          `yaml:"dhcp"`
+	IPNamespace       string            `default:"default" yaml:"ipnamespace"`
+	SubnetLabel       map[string]string `yaml:"subnetLabelSelector"`
 }
 
 func (c *netdataconf) getConf() *netdataconf {
@@ -343,7 +344,7 @@ func contains(s []v1alpha1.IP, elem v1alpha1.IP) bool {
 
 func IPCleaner(ctx context.Context, c *netdataconf, origin string) {
 
-	// This loop will run infinitely after every 15 min.
+	// This loop will run infinitely after every IPCleanerInterval set in config
 	for {
 		ips := getIps(origin)
 		for _, ip := range ips {
@@ -360,7 +361,7 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string) {
 			}
 
 		}
-		time.Sleep(time.Minute * 15)
+		time.Sleep(time.Second * time.Duration(c.IpCleanerInterval))
 	}
 }
 
