@@ -5,11 +5,11 @@
 ## Overview
 The Netdata operator keeps a watch over subnets and scans or discovers the servers from the network by using two different ways NMAP and Netlink.
 
-NMAP - Netdata operator scans for IPv4 addresses and creates the ip objects in the kubernetes cluster.
+NMAP - Netdata operator scans for IPv4 addresses and creates the ip objects in the Kubernetes cluster.
 
-Netlink - Netdata operator subscribes to the netlink for all the IPv6 updates. When the Netdata receives update for IPv6 address it creates or updates the IP object in the kubernetes cluster.
+Netlink - Netdata operator subscribes to Netlink for all the IPv6 updates. When the Netdata receives an update for the IPv6 address it creates or updates the IP object in the Kubernetes cluster.
 
-Netada operator creates ip objects with two important labels ip address and mac of the server. The IP and MAC info is further consumed by oob-operator. 
+Netada operator creates ip objects with two important labels ip address and mac of the server. The IP and MAC info is further consumed by oob-operator.
 
 
 #### Workflow
