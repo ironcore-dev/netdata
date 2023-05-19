@@ -6,7 +6,7 @@ require (
 	github.com/Ullaakut/nmap/v2 v2.2.2
 	github.com/go-logr/logr v1.2.4
 	github.com/google/addlicense v1.1.1
-	github.com/onmetal/ipam v0.0.21
+	github.com/onmetal/ipam v0.0.22
 	github.com/onsi/ginkgo/v2 v2.9.5
 	github.com/onsi/gomega v1.27.7
 	github.com/pkg/errors v0.9.1
@@ -53,7 +53,6 @@ require (
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.37.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
-	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df // indirect
 	go.uber.org/atomic v1.9.0 // indirect
