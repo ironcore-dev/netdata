@@ -290,9 +290,6 @@ func createIPAMNetlink(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subn
 	createNewIP := true
 
 	handleDuplicateMacs(ctx, ip, client, &createNewIP)
-	if !createNewIP {
-		return
-	}
 
 	handleDuplicateIPs(ctx, ip, client, &createNewIP)
 
@@ -344,6 +341,19 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 	}
 	ipsList, _ := client.List(ctx, ipsListOptions)
 
+	// Special case: If an IP object exists from both kea and Netlink then delete Netlink IP
+	deleteIP := CheckIPFromNetlinkAndKea(ipsList, ctx, ip)
+	if deleteIP != "" {
+		*createNewIP = false // do not create new IP from Netlink
+		err := client.Delete(ctx, deleteIP, v1.DeleteOptions{})
+		if err != nil {
+			log.Printf("ERROR!!  delete ips %+v error +%v \n", deleteIP, err.Error())
+		} else {
+			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", deleteIP)
+		}
+		return
+	}
+
 	for _, existedIP := range ipsList.Items {
 		if existedIP.Spec.IP.Equal(ip.Spec.IP) {
 			*createNewIP = false
@@ -367,22 +377,9 @@ func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IP
 								log.Printf("Updated timestamp of IP object: %s \n", updatedIP.ObjectMeta.Name)
 							}
 						}
-						return
 					}
 				}
 			}
-		}
-	}
-
-	// Special case: If an IP object exists from both kea and Netlink then delete Netlink IP
-	deleteIP := CheckIPFromNetlinkAndKea(ipsList, ctx, ip)
-	if deleteIP != "" {
-		*createNewIP = false // do not create new IP from Netlink
-		err := client.Delete(ctx, deleteIP, v1.DeleteOptions{})
-		if err != nil {
-			log.Printf("ERROR!!  delete ips %+v error +%v \n", deleteIP, err.Error())
-		} else {
-			log.Printf("Same IP object exists from kea and Netlink, Deleted IP object : %s \n", deleteIP)
 		}
 	}
 }
