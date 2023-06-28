@@ -665,18 +665,17 @@ func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	log.Printf("Started reconciling for subnet : %v", subnet.ObjectMeta.Name)
-	mergeRes := make(NetdataMap)
 
 	// get configmap data
 	var c netdataconf
 	c.getConf()
 
-	//	fmt.Printf("runtime.GOMAXPROC() = %+v \n", runtime.GOMAXPROC)
-	r.Log.V(1).Info("\nMergeRes init state.", "mergeRes", mergeRes)
 	netSource := os.Getenv("NETSOURCE")
 	switch netSource {
 	case "nmap":
 		ch := make(chan NetdataMap, 1000)
+		mergeRes := make(NetdataMap)
+		r.Log.V(1).Info("\nMergeRes init state.", "mergeRes", mergeRes)
 
 		// Start IP Cleaner go routine, this will be executed only once and it will run forever.
 		doOnce.Do(func() {
