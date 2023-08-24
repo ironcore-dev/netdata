@@ -34,31 +34,31 @@ import (
 	"fmt"
 
 	nmap "github.com/Ullaakut/nmap/v2"
-	ginkgo "github.com/onsi/ginkgo/v2"
-	gomega "github.com/onsi/gomega"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-var _ = ginkgo.Describe("Netdata Controller delete expired", func() {
-	ginkgo.BeforeEach(func() {
+var _ = Describe("Netdata Controller delete expired", func() {
+	BeforeEach(func() {
 	})
 
-	ginkgo.AfterEach(func() {
+	AfterEach(func() {
 	})
 
-	ginkgo.Context("Test toNetdataMap(host *nmap.Host, subnet string) (NetdataMap, error)", func() {
-		ginkgo.It("toNetdataMap", func() {
+	Context("Test toNetdataMap(host *nmap.Host, subnet string) (NetdataMap, error)", func() {
+		It("toNetdataMap", func() {
 			host := nmap.Host{}
 			subnet := "1.2.3.0/24"
 			var expectedVal NetdataMap
 			res, err := toNetdataMap(&host, subnet)
-			gomega.Expect(res).To(gomega.Equal(expectedVal))
-			gomega.Expect(err).To(gomega.HaveOccurred())
-			gomega.Expect(err.Error()).To(gomega.Equal("No data for new crd"))
+			Expect(res).To(Equal(expectedVal))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(Equal("No data for new crd"))
 		})
 	})
 
-	ginkgo.Context("Test NetdataMap.add2map() function", func() {
-		ginkgo.It("Add NetdataSpec one by one", func() {
+	Context("Test NetdataMap.add2map() function", func() {
+		It("Add NetdataSpec one by one", func() {
 
 			mergeRes := make(NetdataMap)
 
@@ -75,7 +75,7 @@ var _ = ginkgo.Describe("Netdata Controller delete expired", func() {
 
 			mergeRes.add2map(mac, keySpec)
 			// added first
-			gomega.Expect(mergeRes[mac]).To(gomega.Equal(keySpec))
+			Expect(mergeRes[mac]).To(Equal(keySpec))
 			fmt.Printf(" \n\n in test mergeRes = %+v \n\n", mergeRes)
 
 			mac2 := "55:55:55:55:55:55"
@@ -92,8 +92,8 @@ var _ = ginkgo.Describe("Netdata Controller delete expired", func() {
 			mergeRes.add2map(mac2, keySpec2)
 			fmt.Printf("\n\n in test2 mergeRes = %+v \n\n", mergeRes)
 			// added second
-			gomega.Expect(mergeRes[mac]).To(gomega.Equal(keySpec))
-			gomega.Expect(mergeRes[mac2]).To(gomega.Equal(keySpec2))
+			Expect(mergeRes[mac]).To(Equal(keySpec))
+			Expect(mergeRes[mac2]).To(Equal(keySpec2))
 
 			ipsubnet3 := IPsubnet{
 				IPS:    []string{"192.168.77.77"},
@@ -108,10 +108,10 @@ var _ = ginkgo.Describe("Netdata Controller delete expired", func() {
 			mergeRes.add2map(mac2, keySpec3)
 			fmt.Printf("\n\n in test 3 mergeRes = %+v \n\n", mergeRes)
 			// added third
-			gomega.Expect(mergeRes[mac]).To(gomega.Equal(keySpec))
-			gomega.Expect(mergeRes[mac2]).NotTo(gomega.Equal(keySpec2))
-			gomega.Expect(len(mergeRes[mac2].Addresses)).To(gomega.Equal(2))
-			gomega.Expect(len(mergeRes[mac2].Hostname)).To(gomega.Equal(2))
+			Expect(mergeRes[mac]).To(Equal(keySpec))
+			Expect(mergeRes[mac2]).NotTo(Equal(keySpec2))
+			Expect(len(mergeRes[mac2].Addresses)).To(Equal(2))
+			Expect(len(mergeRes[mac2].Hostname)).To(Equal(2))
 
 			ipsubnet4 := IPsubnet{
 				IPS:    []string{"192.168.77.11"},
@@ -125,9 +125,9 @@ var _ = ginkgo.Describe("Netdata Controller delete expired", func() {
 			}
 
 			mergeRes.add2map(mac2, keySpec4)
-			gomega.Expect(len(mergeRes[mac2].Addresses)).To(gomega.Equal(2))
-			gomega.Expect(len(mergeRes[mac2].Addresses[1].IPS)).To(gomega.Equal(2))
-			gomega.Expect(len(mergeRes[mac2].Hostname)).To(gomega.Equal(2))
+			Expect(len(mergeRes[mac2].Addresses)).To(Equal(2))
+			Expect(len(mergeRes[mac2].Addresses[1].IPS)).To(Equal(2))
+			Expect(len(mergeRes[mac2].Hostname)).To(Equal(2))
 		})
 	})
 
