@@ -667,10 +667,10 @@ func (r *NetdataReconciler) reconcile(ctx context.Context, req ctrl.Request) (ct
 	var subnet ipamv1alpha1.Subnet
 	err := r.Get(ctx, req.NamespacedName, &subnet)
 	if err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get Subnet: %w", err))
+		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get Subnet: %v", err))
 	}
 	if subnet.ObjectMeta.Name == "" {
-		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get subnet.ObjectMeta.Name: %w", err))
+		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get subnet.ObjectMeta.Name: %v", err))
 	}
 
 	// get configmap data

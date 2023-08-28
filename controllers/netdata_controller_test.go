@@ -107,6 +107,18 @@ var _ = Describe("Netdata Controller delete expired", func() {
 		})
 	})
 
+	When("No valid subnet found", func() {
+		JustBeforeEach(func(ctx SpecContext) {
+			res, err = netdataReconciler.Reconcile(ctx, controllerruntime.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "subnettest"}})
+			fmt.Println(res, err)
+		})
+
+		It("Test valid subnet", func(ctx SpecContext) {
+			Expect(err).To(MatchError("cannot get Subnet: Subnet.ipam.onmetal.de \"subnettest\" not found"))
+			Expect(res).To(Equal(reconcile.Result{}))
+		})
+	})
+
 	Context("Test toNetdataMap(host *nmap.Host, subnet string) (NetdataMap, error)", func() {
 		It("toNetdataMap", func() {
 			host := nmap.Host{}
