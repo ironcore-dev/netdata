@@ -106,8 +106,10 @@ func main() {
 		LeaderElectionID: "d0afb540.onmetal.de",
 		Cache: cache.Options{
 			SyncPeriod: &(syncPeriod),
+			DefaultNamespaces: map[string]cache.Config{
+				ns: {},
+			},
 		},
-		Namespace: ns,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
