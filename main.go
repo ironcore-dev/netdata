@@ -43,6 +43,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -103,8 +104,10 @@ func main() {
 		},
 		LeaderElection:   enableLeaderElection,
 		LeaderElectionID: "d0afb540.onmetal.de",
-		SyncPeriod:       &(syncPeriod),
-		Namespace:        ns,
+		Cache: cache.Options{
+			SyncPeriod: &(syncPeriod),
+		},
+		Namespace: ns,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
