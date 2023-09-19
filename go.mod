@@ -17,7 +17,8 @@ require (
 	k8s.io/api v0.28.1
 	k8s.io/apimachinery v0.28.1
 	k8s.io/client-go v0.28.1
-	sigs.k8s.io/controller-runtime v0.16.1
+	k8s.io/klog/v2 v2.100.1
+	sigs.k8s.io/controller-runtime v0.16.2
 )
 
 require (
@@ -53,7 +54,6 @@ require (
 	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/common v0.44.0 // indirect
 	github.com/prometheus/procfs v0.10.1 // indirect
-	github.com/spf13/afero v1.6.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df // indirect
 	go.uber.org/multierr v1.11.0 // indirect
@@ -74,10 +74,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.28.0 // indirect
 	k8s.io/component-base v0.28.1 // indirect
-	k8s.io/klog/v2 v2.100.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
 	k8s.io/utils v0.0.0-20230406110748-d93618cff8a2 // indirect
-	sigs.k8s.io/controller-runtime/tools/setup-envtest v0.0.0-20230905084151-2a553d6f910d // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
