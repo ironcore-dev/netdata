@@ -68,6 +68,7 @@ import (
 )
 
 var SubnetNetlinkListener = make(map[string]chan struct{})
+var ipLocalCache = make(map[string]time.Time)
 var doOnce sync.Once
 
 // NetdataMap is resulted map of discovered hosts
@@ -261,11 +262,22 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 }
 
 func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logger) {
+	// fill the cache for the first time
+	ips := getIps(origin, log)
+	for _, ip := range ips {
+		ipLocalCache[ip.Spec.IP.String()] = time.Now()
+	}
 
 	for {
 		ips := getIps(origin, log)
 		for _, ip := range ips {
 			ipAddress := ip.Spec.IP.String()
+
+			// If the IP is seen 90% TTL then do not ping it
+			lastSeen := time.Since(ipLocalCache[ipAddress]).Seconds()
+			if lastSeen < float64(c.TTL)*0.9 {
+				continue
+			}
 
 			pinger, err := ping.NewPinger(ipAddress)
 			if err != nil {
@@ -315,8 +327,9 @@ func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipa
 			log.Error(err, "Create IP error")
 		}
 		log.Info(fmt.Sprintf("Created IP object: %s \n", createdIP.ObjectMeta.Name))
-
 	}
+	// update timestamp in the local cache
+	ipLocalCache[ip.Spec.IP.String()] = time.Now()
 }
 
 func CheckIPFromNetlinkAndKea(ips *ipamv1alpha1.IPList, ctx context.Context, ip v1alpha1.IP) string {
