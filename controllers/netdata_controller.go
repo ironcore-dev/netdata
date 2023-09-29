@@ -262,10 +262,11 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 }
 
 func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logger) {
-	// fill the cache for the first time
+	// Initially fill the cache with expired time, this will ensure to ping all IPs in first run
 	ips := getIps(origin, log)
+	expiredTime := time.Now().Add(-(time.Second * time.Duration(c.TTL) * 2))
 	for _, ip := range ips {
-		ipLocalCache[ip.Spec.IP.String()] = time.Now()
+		ipLocalCache[ip.Spec.IP.String()] = expiredTime
 	}
 
 	for {
@@ -297,6 +298,7 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logg
 				if err != nil || pinger.PacketsRecv == 0 {
 					log.Info(fmt.Sprintf("IP Cleaner ping failed, deleting IP object: %s", ip.ObjectMeta.Name))
 					deleteIP(ctx, &ip, log)
+					delete(ipLocalCache, ipAddress)
 				}
 			}
 		}
