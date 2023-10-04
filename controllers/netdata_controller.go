@@ -70,6 +70,7 @@ import (
 var SubnetNetlinkListener = make(map[string]chan struct{})
 var ipLocalCache = make(map[string]time.Time)
 var doOnce sync.Once
+var mu sync.Mutex
 
 // NetdataMap is resulted map of discovered hosts
 type NetdataSpec struct {
@@ -331,7 +332,9 @@ func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipa
 		log.Info(fmt.Sprintf("Created IP object: %s \n", createdIP.ObjectMeta.Name))
 	}
 	// update timestamp in the local cache
+	mu.Lock()
 	ipLocalCache[ip.Spec.IP.String()] = time.Now()
+	mu.Unlock()
 }
 
 func CheckIPFromNetlinkAndKea(ips *ipamv1alpha1.IPList, ctx context.Context, ip v1alpha1.IP) string {
