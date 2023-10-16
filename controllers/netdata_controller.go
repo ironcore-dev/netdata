@@ -71,6 +71,7 @@ var SubnetNetlinkListener = make(map[string]chan struct{})
 var ipLocalCache = make(map[string]time.Time)
 var doOnce sync.Once
 var mu sync.Mutex
+var delMu sync.Mutex
 
 // NetdataMap is resulted map of discovered hosts
 type NetdataSpec struct {
@@ -298,8 +299,10 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logg
 				err = pinger.Run()
 				if err != nil || pinger.PacketsRecv == 0 {
 					log.Info(fmt.Sprintf("IP Cleaner ping failed, deleting IP object: %s", ip.ObjectMeta.Name))
+					delMu.Lock()
 					deleteIP(ctx, &ip, log)
 					delete(ipLocalCache, ipAddress)
+					delMu.Unlock()
 				}
 			}
 		}
