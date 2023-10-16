@@ -299,10 +299,12 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logg
 				err = pinger.Run()
 				if err != nil || pinger.PacketsRecv == 0 {
 					log.Info(fmt.Sprintf("IP Cleaner ping failed, deleting IP object: %s", ip.ObjectMeta.Name))
-					delMu.Lock()
-					deleteIP(ctx, &ip, log)
-					delete(ipLocalCache, ipAddress)
-					delMu.Unlock()
+					err := deleteIP(ctx, &ip, log)
+					if err == nil {
+						delMu.Lock()
+						delete(ipLocalCache, ipAddress)
+						delMu.Unlock()
+					}
 				}
 			}
 		}
@@ -512,7 +514,7 @@ func (mergeRes NetdataMap) addIP2Res(k string, v NetdataSpec) {
 	}
 }
 
-func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) {
+func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
 	kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	client := cs.IpamV1Alpha1().IPs(ip.ObjectMeta.Namespace)
@@ -522,6 +524,7 @@ func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) {
 	} else {
 		log.Info(fmt.Sprintf("deleted IP  %s", ip.ObjectMeta.Name))
 	}
+	return err
 }
 
 func getIps(origin string, log logr.Logger) []v1alpha1.IP {
