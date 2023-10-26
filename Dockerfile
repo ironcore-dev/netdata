@@ -24,6 +24,7 @@ RUN --mount=type=ssh --mount=type=secret,id=github_pat \
 # Copy the go source
 COPY main.go main.go
 COPY controllers/ controllers/
+COPY targets-ipv6-multicast-echo.nse targets-ipv6-multicast-echo.nse
 
 # Build
 RUN --mount=type=cache,target=/root/.cache/go-build \

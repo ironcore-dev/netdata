@@ -239,6 +239,53 @@ func nmapScan(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.
 	return result.Hosts
 }
 
+func nmapScanIPv6(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.Host {
+
+	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
+
+	args := map[string]string{"newtargets": "", "interface": "eno1"}
+
+	scanner, err := nmap.NewScanner(
+		nmap.WithTargets(targetSubnet),
+		nmap.WithPingScan(),
+		nmap.WithPrivileged(),
+		nmap.WithContext(ctx),
+		nmap.WithIPv6Scanning(),
+		nmap.WithScriptArgumentsFile("targets-ipv6-multicast-echo.nse"),
+		nmap.WithScriptArguments(args),
+	)
+	if err != nil {
+		log.Error(err, "unable to create nmap scanner")
+	}
+
+	result, warnings, err := scanner.Run()
+	if err != nil {
+		log.Error(err, "unable to run nmap scan")
+	}
+
+	if warnings != nil {
+		log.Info(fmt.Sprintf("Warnings: \n %v", warnings))
+	}
+
+	// Use the results to print an example output
+	for ihx := range result.Hosts {
+		host := &result.Hosts[ihx]
+		if len(host.Ports) == 0 || len(host.Addresses) == 0 {
+			continue
+		}
+
+		log.Info(fmt.Sprintf("Host %q:", host.Addresses[0]))
+
+		for idx := range host.Ports {
+			port := &host.Ports[idx]
+			log.Info(fmt.Sprintf("\tPort %d/%s %s %s", port.ID, port.Protocol, port.State, port.Service.Name))
+		}
+	}
+
+	log.Info(fmt.Sprintf("Nmap done: %d hosts up scanned in %3f seconds", len(result.Hosts), result.Stats.Finished.Elapsed))
+	return result.Hosts
+}
+
 func kubeconfigCreate(log logr.Logger) *rest.Config {
 	var kubeconfig *rest.Config
 	kubeconfigPath := os.Getenv("KUBECONFIG")
@@ -529,7 +576,11 @@ func toNetdataMap(host *nmap.Host, subnet string) (NetdataMap, error) {
 		hostname = host.Hostnames[0].Name
 	}
 	res := make(NetdataMap)
-	res[nmapMac] = newNetdataSpec(nmapMac, nmapIp, hostname, "ipv4")
+	if IpVersion(subnet) == "ipv4" {
+		res[nmapMac] = newNetdataSpec(nmapMac, nmapIp, hostname, "ipv4")
+	} else {
+		res[nmapMac] = newNetdataSpec(nmapMac, nmapIp, hostname, "ipv6")
+	}
 	return res, nil
 }
 
@@ -556,7 +607,17 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 					}
 				}
 			} else {
-				log.Info("Skip nmap scanning for ipv6", "subnet", subnet)
+				res := nmapScanIPv6(subnet, ctx, log)
+
+				for hostidx := range res {
+					host := &res[hostidx]
+					res, err := toNetdataMap(host, subnet)
+					if err == nil {
+						log.Info("Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
+						ch <- res
+						log.Info("added to channel Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
+					}
+				}
 			}
 		}
 	}
