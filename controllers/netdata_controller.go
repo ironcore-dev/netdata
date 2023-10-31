@@ -239,11 +239,11 @@ func nmapScan(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.
 	return result.Hosts
 }
 
-func nmapScanIPv6(targetSubnet string, interfaceName string, ctx context.Context, log logr.Logger) []nmap.Host {
+func nmapScanIPv6(targetSubnet string, interfaceName string, interfaceAddress string, ctx context.Context, log logr.Logger) []nmap.Host {
 
 	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
 
-	args := map[string]string{"newtargets": "", "interface": interfaceName}
+	args := map[string]string{"newtargets": "", "interface": interfaceName, "sourceIP": interfaceAddress}
 
 	scanner, err := nmap.NewScanner(
 		nmap.WithTargets(targetSubnet),
@@ -607,13 +607,13 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 					}
 				}
 			} else {
-				interfaceName := c.getInterfaceName(subnet, log)
+				interfaceName, ipAddress := c.getNetworkInterface(subnet, log)
 				if interfaceName == "" {
 					log.Info("Interface not found for subnet skipping IPv6 scan for subnet", subnet)
 					continue
 				}
 
-				res := nmapScanIPv6(subnet, interfaceName, ctx, log)
+				res := nmapScanIPv6(subnet, interfaceName, ipAddress, ctx, log)
 
 				for hostidx := range res {
 					host := &res[hostidx]
@@ -629,7 +629,7 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 	}
 }
 
-func (c *netdataconf) getInterfaceName(subnet string, log logr.Logger) string {
+func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (interfaceName string, ipAddress string) {
 	ifaces, _ := net.Interfaces()
 	for _, i := range ifaces {
 		log.Info(fmt.Sprintf("interface name %s", i.Name))
@@ -639,12 +639,12 @@ func (c *netdataconf) getInterfaceName(subnet string, log logr.Logger) string {
 				_, ipnetSub, _ := net.ParseCIDR(subnet)
 				ipIf, _, _ := net.ParseCIDR(addri.String())
 				if ipnetSub.Contains(ipIf) {
-					return i.Name
+					return i.Name, addri.String()
 				}
 			}
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet,verbs=get;list;watch
