@@ -243,7 +243,7 @@ func nmapScanIPv6(targetSubnet string, interfaceName string, interfaceAddress st
 
 	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
 
-	args := map[string]string{"newtargets": "", "interface": interfaceName, "sourceIP": interfaceAddress}
+	args := map[string]string{"newtargets": "", "interface": interfaceName, "srcip": interfaceAddress}
 
 	scanner, err := nmap.NewScanner(
 		nmap.WithTargets(targetSubnet),
