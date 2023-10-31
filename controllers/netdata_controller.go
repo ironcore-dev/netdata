@@ -239,11 +239,11 @@ func nmapScan(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.
 	return result.Hosts
 }
 
-func nmapScanIPv6(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.Host {
+func nmapScanIPv6(targetSubnet string, interfaceName string, ctx context.Context, log logr.Logger) []nmap.Host {
 
 	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
 
-	args := map[string]string{"newtargets": "", "interface": "eno1"}
+	args := map[string]string{"newtargets": "", "interface": interfaceName}
 
 	scanner, err := nmap.NewScanner(
 		nmap.WithTargets(targetSubnet),
@@ -607,7 +607,13 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 					}
 				}
 			} else {
-				res := nmapScanIPv6(subnet, ctx, log)
+				interfaceName := c.getInterfaceName(subnet, log)
+				if interfaceName == "" {
+					log.Info("Interface not found for subnet skipping IPv6 scan for subnet", subnet)
+					continue
+				}
+
+				res := nmapScanIPv6(subnet, interfaceName, ctx, log)
 
 				for hostidx := range res {
 					host := &res[hostidx]
@@ -621,6 +627,24 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 			}
 		}
 	}
+}
+
+func (c *netdataconf) getInterfaceName(subnet string, log logr.Logger) string {
+	ifaces, _ := net.Interfaces()
+	for _, i := range ifaces {
+		log.Info(fmt.Sprintf("interface name %s", i.Name))
+		if IpVersion(subnet) == "ipv6" {
+			addrs, _ := i.Addrs()
+			for _, addri := range addrs {
+				_, ipnetSub, _ := net.ParseCIDR(subnet)
+				ipIf, _, _ := net.ParseCIDR(addri.String())
+				if ipnetSub.Contains(ipIf) {
+					return i.Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet,verbs=get;list;watch
