@@ -65,7 +65,8 @@ local function single_interface_broadcast(if_nfo, results)
 
   local condvar = nmap.condvar(results)
   local src_mac = if_nfo.mac
-  local src_ip6 = ipOps.ip_to_str(if_nfo.address)
+  local src_ip6 = ipOps.ip_to_str(stdnse.get_script_args(SCRIPT_NAME .. ".srcip"))
+    or ipOps.ip_to_str(if_nfo.address)
   local dst_mac = packet.mactobin("33:33:00:00:00:01")
   local dst_ip6 = ipOps.ip_to_str("ff02::1")
 
@@ -166,5 +167,5 @@ action = function()
     end
   until next(threads) == nil
 
-  return format_output(results)
+  -- return format_output(results)
 end
