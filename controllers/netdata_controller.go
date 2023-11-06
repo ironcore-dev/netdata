@@ -111,31 +111,6 @@ func (c *netdataconf) getConf(r *NetdataReconciler, log logr.Logger) *netdatacon
 	return c
 }
 
-func (c *netdataconf) getNMAPInterface(log logr.Logger) string {
-	if os.Getenv("NETSOURCE") == "nmap" {
-		subnetList := c.getSubnets(log)
-		ifaces, _ := net.Interfaces()
-		for _, i := range ifaces {
-			log.Info(fmt.Sprintf("interface name %s", i.Name))
-			for _, subi := range subnetList.Items {
-				subnet := subi.Spec.CIDR.String()
-				// only IPv4 networks are supported for now
-				if IpVersion(subnet) == "ipv4" {
-					addrs, _ := i.Addrs()
-					for _, addri := range addrs {
-						_, ipnetSub, _ := net.ParseCIDR(subnet)
-						ipIf, _, _ := net.ParseCIDR(addri.String())
-						if ipnetSub.Contains(ipIf) {
-							return i.Name
-						}
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // get subnets by label clusterwide
 func (c *netdataconf) getSubnets(log logr.Logger) *v1alpha1.SubnetList {
 	kubeconfig := kubeconfigCreate(log)
@@ -588,41 +563,38 @@ func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch c
 	defer wg.Done()
 	subnetList := c.getSubnets(log)
 	for _, subi := range subnetList.Items {
-		// check if at least 1 interface belong to subnet
-		if len(c.getNMAPInterface(log)) > 0 {
 
-			subnet := subi.Spec.CIDR.String()
-			log.Info("Nmap scan ", "subnet", subnet)
+		subnet := subi.Spec.CIDR.String()
+		log.Info("Nmap scan ", "subnet", subnet)
 
-			if IpVersion(subnet) == "ipv4" {
-				res := nmapScan(subnet, ctx, log)
+		interfaceName, ipAddress := c.getNetworkInterface(subnet, log)
+		if interfaceName == "" {
+			log.Info("Interface not found for subnet skipping nmap scan for the subnet", subnet)
+			continue
+		}
 
-				for hostidx := range res {
-					host := &res[hostidx]
-					res, err := toNetdataMap(host, subnet)
-					if err == nil {
-						log.Info("Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
-						ch <- res
-						log.Info("added to channel Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
-					}
+		if IpVersion(subnet) == "ipv4" {
+			res := nmapScan(subnet, ctx, log)
+
+			for hostidx := range res {
+				host := &res[hostidx]
+				res, err := toNetdataMap(host, subnet)
+				if err == nil {
+					log.Info("Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
+					ch <- res
+					log.Info("added to channel Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
 				}
-			} else {
-				interfaceName, ipAddress := c.getNetworkInterface(subnet, log)
-				if interfaceName == "" {
-					log.Info("Interface not found for subnet skipping IPv6 scan for subnet", subnet)
-					continue
-				}
+			}
+		} else {
+			res := nmapScanIPv6(subnet, interfaceName, ipAddress, ctx, log)
 
-				res := nmapScanIPv6(subnet, interfaceName, ipAddress, ctx, log)
-
-				for hostidx := range res {
-					host := &res[hostidx]
-					res, err := toNetdataMap(host, subnet)
-					if err == nil {
-						log.Info("Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
-						ch <- res
-						log.Info("added to channel Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
-					}
+			for hostidx := range res {
+				host := &res[hostidx]
+				res, err := toNetdataMap(host, subnet)
+				if err == nil {
+					log.Info("Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
+					ch <- res
+					log.Info("added to channel Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
 				}
 			}
 		}
