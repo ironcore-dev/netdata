@@ -46,9 +46,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	nmap "github.com/Ullaakut/nmap/v2"
 
@@ -56,35 +53,31 @@ import (
 	"github.com/onmetal/ipam/clientset"
 	clienta1 "github.com/onmetal/ipam/clientset/v1alpha1"
 
-	ipamv1alpha1 "github.com/onmetal/ipam/api/v1alpha1"
 	ping "github.com/prometheus-community/pro-bing"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 var doOnce sync.Once
-
 var ipLocalCache = make(map[string]time.Time)
 var mu sync.Mutex
 var delMu sync.Mutex
 
+var (
+	Log = ctrl.Log.WithName("netdata")
+)
+
 // NetdataMap is resulted map of discovered hosts
-type NetdataSpec struct {
-	Addresses  []IPsubnet
-	MACAddress string
-	Hostname   []string
+type hostData struct {
+	ip              string
+	mac             string
+	subnetName      string
+	subnetNamespace string
 }
-
-type IPsubnet struct {
-	IPS    []string
-	Subnet string
-	IPType string
-}
-
-type NetdataMap map[string]NetdataSpec
 
 type netdataconf struct {
 	Interval    int               `yaml:"interval"`
@@ -93,9 +86,9 @@ type netdataconf struct {
 	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
 }
 
-func (c *netdataconf) getConf(r *NetdataReconciler, log logr.Logger) *netdataconf {
+func (c *netdataconf) getConf(log logr.Logger) *netdataconf {
 
-	yamlFile, err := os.ReadFile(r.Config)
+	yamlFile, err := os.ReadFile("/etc/manager/netdata-config.yaml")
 	if err != nil {
 		log.Error(err, "yamlFile.Get error")
 		os.Exit(21)
@@ -141,43 +134,12 @@ func (c *netdataconf) validateInterval(log logr.Logger) {
 	}
 }
 
-// NetdataReconciler reconciles a Netdata object
-type NetdataReconciler struct {
-	client.Client
-	Log         logr.Logger
-	Scheme      *runtime.Scheme
-	Config      string
-	disabled    bool
-	disabledMtx sync.RWMutex
-}
-
-func (r *NetdataReconciler) enable() {
-	r.disabledMtx.Lock()
-	defer r.disabledMtx.Unlock()
-	r.disabled = false
-}
-
-func (r *NetdataReconciler) disable() {
-	r.disabledMtx.Lock()
-	defer r.disabledMtx.Unlock()
-	r.disabled = true
-}
-
-func (r *NetdataReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.disabledMtx.RLock()
-	defer r.disabledMtx.RUnlock()
-	if r.disabled {
-		return ctrl.Result{}, nil
-	}
-
-	return r.reconcile(ctx, req)
-}
-
-func nmapScan(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.Host {
+func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *sync.WaitGroup, ctx context.Context, log logr.Logger) {
+	defer wg.Done()
 	//  setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip  /usr/bin/nmap
 	// nmap --privileged -sn -oX - 192.168.178.0/24
 	scanner, err := nmap.NewScanner(
-		nmap.WithTargets(targetSubnet),
+		nmap.WithTargets(subnetName),
 		nmap.WithPingScan(),
 		nmap.WithPrivileged(),
 		nmap.WithContext(ctx),
@@ -195,26 +157,25 @@ func nmapScan(targetSubnet string, ctx context.Context, log logr.Logger) []nmap.
 		log.Info(fmt.Sprintf("Warnings: \n %v", warnings))
 	}
 
-	// Use the results to print an example output
-	for ihx := range result.Hosts {
-		host := &result.Hosts[ihx]
-		if len(host.Ports) == 0 || len(host.Addresses) == 0 {
-			continue
-		}
+	log.Info(fmt.Sprintf("Nmap done: %d hosts up scanned in %3f seconds", len(result.Hosts), result.Stats.Finished.Elapsed))
 
-		log.Info(fmt.Sprintf("Host %q:", host.Addresses[0]))
-
-		for idx := range host.Ports {
-			port := &host.Ports[idx]
-			log.Info(fmt.Sprintf("\tPort %d/%s %s %s", port.ID, port.Protocol, port.State, port.Service.Name))
+	for _, host := range result.Hosts {
+		hostdata := hostData{}
+		if len(host.Addresses) == 2 {
+			hostdata.mac = host.Addresses[1].Addr
+			hostdata.ip = host.Addresses[0].Addr
+			hostdata.subnetName = subnetName
+			hostdata.subnetNamespace = subnetNamespace
+			ch <- hostdata
+		} else {
+			log.Info("ip or mac info not found", "host details", host.Addresses)
 		}
 	}
-
-	log.Info(fmt.Sprintf("Nmap done: %d hosts up scanned in %3f seconds", len(result.Hosts), result.Stats.Finished.Elapsed))
-	return result.Hosts
 }
 
-func nmapScanIPv6(targetSubnet string, interfaceName string, interfaceAddress string, ctx context.Context, log logr.Logger) []nmap.Host {
+func nmapScanIPv6(ch chan hostData, targetSubnet string, wg *sync.WaitGroup, interfaceName string, interfaceAddress string, ctx context.Context, log logr.Logger) {
+
+	defer wg.Done()
 
 	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
 
@@ -242,23 +203,16 @@ func nmapScanIPv6(targetSubnet string, interfaceName string, interfaceAddress st
 		log.Info(fmt.Sprintf("Warnings: \n %v", warnings))
 	}
 
-	// Use the results to print an example output
-	for ihx := range result.Hosts {
-		host := &result.Hosts[ihx]
-		if len(host.Ports) == 0 || len(host.Addresses) == 0 {
-			continue
-		}
-
-		log.Info(fmt.Sprintf("Host %q:", host.Addresses[0]))
-
-		for idx := range host.Ports {
-			port := &host.Ports[idx]
-			log.Info(fmt.Sprintf("\tPort %d/%s %s %s", port.ID, port.Protocol, port.State, port.Service.Name))
+	for _, host := range result.Hosts {
+		hostdata := hostData{}
+		if len(host.Addresses) == 2 {
+			hostdata.mac = host.Addresses[1].Addr
+			hostdata.ip = host.Addresses[0].Addr
+			ch <- hostdata
+		} else {
+			log.Info("ip or mac info not found", "host details", host.Addresses)
 		}
 	}
-
-	log.Info(fmt.Sprintf("Nmap done: %d hosts up scanned in %3f seconds", len(result.Hosts), result.Stats.Finished.Elapsed))
-	return result.Hosts
 }
 
 func kubeconfigCreate(log logr.Logger) *rest.Config {
@@ -283,8 +237,8 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 	return kubeconfig
 }
 
-func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logger) {
-
+func IPCleaner(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
+	log.Info("Starting IP cleaner")
 	// Initially fill the cache with expired time, this will ensure to ping all IPs in first run
 	ips := getIps(origin, log)
 	expiredTime := time.Now().Add(-(time.Second * time.Duration(c.TTL) * 2))
@@ -295,6 +249,7 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logg
 	for {
 		ips := getIps(origin, log)
 		for _, ip := range ips {
+
 			ipAddress := ip.Spec.IP.String()
 
 			// If the IP is seen 90% TTL then do not ping it
@@ -333,14 +288,15 @@ func IPCleaner(ctx context.Context, c *netdataconf, origin string, log logr.Logg
 	}
 }
 
-func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipamv1alpha1.Subnet, log logr.Logger) {
+func createIPAM(hostdata hostData, c *netdataconf, ctx context.Context, ip v1alpha1.IP, log logr.Logger) {
 	kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
-	client := cs.IpamV1Alpha1().IPs(subnet.ObjectMeta.Namespace)
+	client := cs.IpamV1Alpha1().IPs(hostdata.subnetNamespace)
 
-	ip.Spec.Subnet.Name = subnet.ObjectMeta.Name
-	ip.ObjectMeta.Namespace = subnet.ObjectMeta.Namespace
+	ip.Spec.Subnet.Name = hostdata.subnetName
+	ip.ObjectMeta.Namespace = hostdata.subnetNamespace
 
+	log.Info("namespace" + ip.ObjectMeta.Namespace)
 	createNewIP := true
 
 	handleDuplicateMacs(ctx, ip, client, &createNewIP, log)
@@ -351,6 +307,7 @@ func createIPAM(c *netdataconf, ctx context.Context, ip v1alpha1.IP, subnet *ipa
 	if createNewIP {
 		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
 		ip.OwnerReferences = append(ip.OwnerReferences, ref)
+		log.Info("calling create", "object", ip)
 		createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
 		if err != nil {
 			log.Error(err, "Create IP error")
@@ -414,28 +371,22 @@ func FullIPv6(ip net.IP) string {
 		string(dst[28:])
 }
 
-func createNetCRD(mv NetdataSpec, conf *netdataconf, ctx context.Context, subnet *ipamv1alpha1.Subnet, log logr.Logger) {
-	macLow := strings.ToLower(mv.MACAddress)
-	mv.MACAddress = macLow
+func createNetCRD(hostdata hostData, conf *netdataconf, ctx context.Context, log logr.Logger) {
+	macLow := strings.ToLower(hostdata.mac)
+	hostdata.mac = macLow
 
 	crdname := strings.ReplaceAll(macLow, ":", "")
+	log.Info("mac is : " + crdname)
 	labels := make(map[string]string)
-	for idx := range mv.Addresses {
-		ipsubnet := &mv.Addresses[idx]
-		ips := ipsubnet.IPS
-		ipsubnet.IPType = IpVersion(ips[0])
-		for jdx := range ips {
-			labels["ip"] = strings.ReplaceAll(ips[jdx], ":", "-")
-		}
-	}
-	labels["origin"] = os.Getenv("NETSOURCE")
+	labels["ip"] = strings.ReplaceAll(hostdata.ip, ":", "-")
+	labels["origin"] = "nmap"
 	labels["mac"] = crdname
 	labels["labelsubnet"] = conf.SubnetLabel["labelsubnet"]
-	ipaddr, _ := v1alpha1.IPAddrFromString(mv.Addresses[0].IPS[0])
+	ipaddr, _ := v1alpha1.IPAddrFromString(hostdata.ip)
 
 	ipIPAM := &v1alpha1.IP{
 		ObjectMeta: v1.ObjectMeta{
-			GenerateName: crdname + "-" + os.Getenv("NETSOURCE") + "-",
+			GenerateName: crdname + "-" + "nmap" + "-",
 			Namespace:    conf.IPNamespace,
 			Labels:       labels,
 		},
@@ -446,55 +397,8 @@ func createNetCRD(mv NetdataSpec, conf *netdataconf, ctx context.Context, subnet
 			IP: ipaddr,
 		},
 	}
-
-	createIPAM(conf, ctx, *ipIPAM, subnet, log)
-}
-
-func newNetdataSpec(mac string, ip string, hostname string, iptype string) NetdataSpec {
-	ips := []string{ip}
-	ipsubnet := IPsubnet{
-		IPS:    ips,
-		Subnet: "deleteThisField",
-		IPType: iptype,
-	}
-	return NetdataSpec{
-		Addresses:  []IPsubnet{ipsubnet},
-		MACAddress: mac,
-		Hostname:   []string{hostname},
-	}
-}
-
-func unique(arr []string) []string {
-	occurred := map[string]bool{}
-	result := []string{}
-	for e := range arr {
-		if !occurred[arr[e]] {
-			occurred[arr[e]] = true
-			result = append(result, arr[e])
-		}
-	}
-	return result
-}
-
-func (mergeRes NetdataMap) addIP2Res(k string, v NetdataSpec) {
-	newHostname := append(mergeRes[k].Hostname, v.Hostname...)
-	if thisMac, ok := mergeRes[k]; ok {
-		thisMac.Hostname = unique(newHostname)
-		mergeRes[k] = thisMac
-	}
-
-	for idx := range mergeRes[k].Addresses {
-		ipsubnet := &mergeRes[k].Addresses[idx]
-		// v always contain only 1 subnet
-		if ipsubnet.Subnet == v.Addresses[0].Subnet {
-			ipsubnet.IPS = append(ipsubnet.IPS, v.Addresses[0].IPS...)
-			return
-		}
-	}
-	if thisMac, ok := mergeRes[k]; ok {
-		thisMac.Addresses = append(thisMac.Addresses, v.Addresses[0])
-		mergeRes[k] = thisMac
-	}
+	log.Info("ip", "entire ip", ipIPAM)
+	createIPAM(hostdata, conf, ctx, *ipIPAM, log)
 }
 
 func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
@@ -537,170 +441,74 @@ func IpVersion(s string) string {
 	return ""
 }
 
-func toNetdataMap(host *nmap.Host, subnet string) (NetdataMap, error) {
-	var nmapMac string
-	if len(host.Addresses) == 2 {
-		nmapMac = host.Addresses[1].Addr
-	} else {
-		return nil, errors.New("No data for new crd")
-	}
-	nmapIp := host.Addresses[0].Addr
+func nmapProcess(c *netdataconf, ctx context.Context, ch chan hostData, log logr.Logger) {
+	wg := sync.WaitGroup{}
+	for {
+		subnetList := c.getSubnets(log)
+		for _, subi := range subnetList.Items {
+			subnet := subi.Spec.CIDR.String()
 
-	hostname := ""
-	if len(host.Hostnames) > 0 {
-		hostname = host.Hostnames[0].Name
-	}
-	res := make(NetdataMap)
-	if IpVersion(subnet) == "ipv4" {
-		res[nmapMac] = newNetdataSpec(nmapMac, nmapIp, hostname, "ipv4")
-	} else {
-		res[nmapMac] = newNetdataSpec(nmapMac, nmapIp, hostname, "ipv6")
-	}
-	return res, nil
-}
-
-func nmapProcess(c *netdataconf, r *NetdataReconciler, ctx context.Context, ch chan NetdataMap, wg *sync.WaitGroup, log logr.Logger) {
-	defer wg.Done()
-	subnetList := c.getSubnets(log)
-	for _, subi := range subnetList.Items {
-
-		subnet := subi.Spec.CIDR.String()
-		log.Info("Nmap scan ", "subnet", subnet)
-
-		interfaceName, ipAddress := c.getNetworkInterface(subnet, log)
-		if interfaceName == "" {
-			log.Info("Interface not found for subnet skipping nmap scan for the subnet", subnet)
-			continue
-		}
-
-		if IpVersion(subnet) == "ipv4" {
-			res := nmapScan(subnet, ctx, log)
-
-			for hostidx := range res {
-				host := &res[hostidx]
-				res, err := toNetdataMap(host, subnet)
-				if err == nil {
-					log.Info("Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
-					ch <- res
-					log.Info("added to channel Host", "ipv4 is", host.Addresses[0], " mac is ", host.Addresses[1])
-				}
+			val, ok := subi.Labels["labelsubnet"]
+			if !ok || val != c.SubnetLabel["labelsubnet"] {
+				log.Info("Skip the Subnet as it does not have a label labelsubnet", "subnet", subnet)
+				continue
 			}
-		} else {
-			res := nmapScanIPv6(subnet, interfaceName, ipAddress, ctx, log)
 
-			for hostidx := range res {
-				host := &res[hostidx]
-				res, err := toNetdataMap(host, subnet)
-				if err == nil {
-					log.Info("Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
-					ch <- res
-					log.Info("added to channel Host", "ipv6 is", host.Addresses[0], " mac is ", host.Addresses[1])
-				}
+			interfaceName, ipAddress := c.getNetworkInterface(subnet, log)
+			if interfaceName == "" {
+				log.Info("Skip the Subnet as it does not have a network interface", "subnet", subnet)
+				continue
+			}
+
+			log.Info("started Nmap scan ", "subnet", subnet, "interface", interfaceName)
+
+			if IpVersion(subnet) == "ipv4" {
+				wg.Add(1)
+				go nmapScan(ch, subnet, subi.Namespace, &wg, ctx, log)
+			} else {
+				wg.Add(1)
+				go nmapScanIPv6(ch, subnet, &wg, interfaceName, ipAddress, ctx, log)
 			}
 		}
+		wg.Wait()
+		time.Sleep(time.Minute * 30)
 	}
 }
 
 func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (interfaceName string, ipAddress string) {
 	ifaces, _ := net.Interfaces()
 	for _, i := range ifaces {
-		log.Info(fmt.Sprintf("interface name %s", i.Name))
-		if IpVersion(subnet) == "ipv6" {
-			addrs, _ := i.Addrs()
-			for _, addri := range addrs {
-				_, ipnetSub, _ := net.ParseCIDR(subnet)
-				ipIf, _, _ := net.ParseCIDR(addri.String())
-				if ipnetSub.Contains(ipIf) {
-					return i.Name, addri.String()
-				}
+		addrs, _ := i.Addrs()
+		for _, addri := range addrs {
+			_, ipnetSub, _ := net.ParseCIDR(subnet)
+			ipIf, _, _ := net.ParseCIDR(addri.String())
+			if ipnetSub.Contains(ipIf) {
+				return i.Name, addri.String()
 			}
 		}
 	}
 	return "", ""
 }
 
-// +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet,verbs=get;list;watch
-// +kubebuilder:rbac:groups=ipam.onmetal.de/v1alpha1,resources=subnet/status,verbs=get
-func (r *NetdataReconciler) reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := r.Log.WithValues("netdata", req.NamespacedName)
-	var subnet ipamv1alpha1.Subnet
-	err := r.Get(ctx, req.NamespacedName, &subnet)
-	if err != nil {
-		log.Error(err, "requested subnet resource not found")
-		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get Subnet: %v", err))
-	}
-	if subnet.ObjectMeta.Name == "" {
-		return ctrl.Result{}, client.IgnoreNotFound(fmt.Errorf("cannot get subnet.ObjectMeta.Name: %v", err))
-	}
-
+func Start() {
+	log := Log.WithValues("netdata", "oob")
+	log.Info("Start nmap scanner")
 	// get configmap data
 	var c netdataconf
-	c.getConf(r, log)
+	c.getConf(log)
+	log.Info("config", "config", c)
+	ctx := context.TODO()
 
-	// Skip subnets which do not have required label. e.g labelsubnet = oob
-	val, ok := subnet.Labels["labelsubnet"]
-	if !ok || val != c.SubnetLabel["labelsubnet"] {
-		errString := fmt.Sprintf("Not reconciling as Labelsubnet do not match for subnet : %v", subnet.ObjectMeta.Name)
-		log.Info(errString)
-		return ctrl.Result{}, fmt.Errorf(errString)
+	// Start IP Cleaner go routine, this will be executed only once and it will run forever.
+	// doOnce.Do(func() {
+	// 	go IPCleaner(&c, ctx, "nmap", log)
+	// })
+
+	ch := make(chan hostData, 5)
+	go nmapProcess(&c, ctx, ch, log)
+
+	for hostdata := range ch {
+		log.Info("creating ip object", "ip", hostdata.ip, "mac", hostdata.mac)
+		createNetCRD(hostdata, &c, ctx, log)
 	}
-
-	log.Info("Started reconciling for subnet", "subnet", subnet.ObjectMeta.Name)
-
-	netSource := os.Getenv("NETSOURCE")
-	switch netSource {
-	case "nmap":
-		ch := make(chan NetdataMap, 1000)
-		mergeRes := make(NetdataMap)
-		log.Info("\nMergeRes init state.", "mergeRes", mergeRes)
-		// Start IP Cleaner go routine, this will be executed only once and it will run forever.
-		doOnce.Do(func() {
-			log.Info("Starting IP Cleaner...")
-			go IPCleaner(ctx, &c, "nmap", log)
-		})
-
-		wg := sync.WaitGroup{}
-
-		wg.Add(1)
-		go nmapProcess(&c, r, ctx, ch, &wg, log)
-		log.Info("\nStarted nmap \n")
-
-		wg.Wait()
-		log.Info("\nWg ended \n")
-		close(ch)
-		log.Info("\nch closed \n")
-
-		for entity := range ch {
-			for k, v := range entity {
-				log.Info("\ntest 1  mergeRes = %+v \n", mergeRes)
-				log.Info("\ntest 1  k = %+v \n", k)
-				log.Info("\ntest 1  v = %+v \n", v)
-				mergeRes.add2map(k, v)
-				log.Info("\ntest 2 should change  mergeRes = %+v \n", mergeRes)
-			}
-		}
-
-		for _, mv := range mergeRes {
-			createNetCRD(mv, &c, ctx, &subnet, log)
-		}
-	default:
-		log.Error(fmt.Errorf("Require define proper NETSOURCE environment variable. current NETSOURCE is +%v", netSource), "error", "env")
-		os.Exit(11)
-	}
-	return ctrl.Result{}, nil
-}
-
-func (mergeRes NetdataMap) add2map(k string, v NetdataSpec) {
-	indexArr := len(mergeRes[k].Addresses)
-	if indexArr == 0 {
-		mergeRes[k] = v
-	} else {
-		mergeRes.addIP2Res(k, v)
-	}
-}
-
-func (r *NetdataReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.Subnet{}).
-		Complete(r)
 }
