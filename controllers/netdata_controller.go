@@ -74,10 +74,9 @@ var (
 
 // NetdataMap is resulted map of discovered hosts
 type hostData struct {
-	ip              string
-	mac             string
-	subnetName      string
-	subnetNamespace string
+	ip         string
+	mac        string
+	subnetName string
 }
 
 type netdataconf struct {
@@ -131,7 +130,7 @@ func (c *netdataconf) validateInterval(log logr.Logger) {
 	}
 }
 
-func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *sync.WaitGroup, ctx context.Context, log logr.Logger) {
+func nmapScan(ch chan hostData, subnetName string, wg *sync.WaitGroup, ctx context.Context, log logr.Logger) {
 	defer wg.Done()
 	//  setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip  /usr/bin/nmap
 	// nmap --privileged -sn -oX - 192.168.178.0/24
@@ -160,7 +159,6 @@ func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *s
 			hostdata.mac = host.Addresses[1].Addr
 			hostdata.ip = host.Addresses[0].Addr
 			hostdata.subnetName = subnetName
-			hostdata.subnetNamespace = subnetNamespace
 			ch <- hostdata
 		} else {
 			log.Info("mac not found", "host", host.Addresses)
@@ -168,7 +166,7 @@ func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *s
 	}
 }
 
-func nmapScanIPv6(ch chan hostData, targetSubnet string, wg *sync.WaitGroup, interfaceName string, interfaceAddress string, ctx context.Context, log logr.Logger) {
+func nmapScanIPv6(ch chan hostData, subnetName string, wg *sync.WaitGroup, interfaceName string, interfaceAddress string, ctx context.Context, log logr.Logger) {
 
 	defer wg.Done()
 
@@ -177,7 +175,7 @@ func nmapScanIPv6(ch chan hostData, targetSubnet string, wg *sync.WaitGroup, int
 	args := map[string]string{"newtargets": "", "interface": interfaceName, "srcip": interfaceAddress}
 
 	scanner, err := nmap.NewScanner(
-		nmap.WithTargets(targetSubnet),
+		nmap.WithTargets(subnetName),
 		nmap.WithPingScan(),
 		nmap.WithPrivileged(),
 		nmap.WithContext(ctx),
@@ -203,6 +201,7 @@ func nmapScanIPv6(ch chan hostData, targetSubnet string, wg *sync.WaitGroup, int
 		if len(host.Addresses) == 2 {
 			hostdata.mac = host.Addresses[1].Addr
 			hostdata.ip = host.Addresses[0].Addr
+			hostdata.subnetName = subnetName
 			ch <- hostdata
 		} else {
 			log.Info("mac not found", "host", host.Addresses)
@@ -360,7 +359,7 @@ func createIP(hostdata hostData, conf *netdataconf, ctx context.Context, log log
 
 	createNewIP := true
 	cs, _ := clientset.NewForConfig(kubeconfig)
-	client := cs.IpamV1Alpha1().IPs(hostdata.subnetNamespace)
+	client := cs.IpamV1Alpha1().IPs(conf.IPNamespace)
 	handleDuplicateMacs(ctx, *ip, client, &createNewIP, log)
 	handleDuplicateIPs(ctx, *ip, client, &createNewIP, log)
 
@@ -443,7 +442,7 @@ func subnetScanCronjob(c *netdataconf, ctx context.Context, ch chan hostData, lo
 
 			if IpVersion(subnet) == "ipv4" {
 				wg.Add(1)
-				go nmapScan(ch, subnet, subi.Namespace, &wg, ctx, log)
+				go nmapScan(ch, subnet, &wg, ctx, log)
 			} else {
 				wg.Add(1)
 				go nmapScanIPv6(ch, subnet, &wg, interfaceName, ipAddress, ctx, log)
