@@ -68,7 +68,8 @@ var mu sync.Mutex
 var delMu sync.Mutex
 
 var (
-	Log = ctrl.Log.WithName("netdata")
+	Log        = ctrl.Log.WithName("netdata")
+	kubeconfig = kubeconfigCreate(Log)
 )
 
 // NetdataMap is resulted map of discovered hosts
@@ -99,14 +100,12 @@ func (c *netdataconf) getConf(log logr.Logger) *netdataconf {
 	}
 	c.validate(log)
 
-	log.Info(fmt.Sprintf("Config is %v ", c))
-
 	return c
 }
 
 // get subnets by label clusterwide
 func (c *netdataconf) getSubnets(log logr.Logger) *v1alpha1.SubnetList {
-	kubeconfig := kubeconfigCreate(log)
+	//kubeconfig := kubeconfigCreate(log)
 
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	clientSubnet := cs.IpamV1Alpha1().Subnets(metav1.NamespaceAll)
@@ -126,9 +125,7 @@ func (c *netdataconf) validate(log logr.Logger) {
 
 // TTL > Interval
 func (c *netdataconf) validateInterval(log logr.Logger) {
-	if c.TTL > c.Interval {
-		log.Info("valid ttl > interval")
-	} else {
+	if c.TTL < c.Interval {
 		log.Error(fmt.Errorf("wrong ttl < interval"), "error")
 		os.Exit(20)
 	}
@@ -154,10 +151,8 @@ func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *s
 	}
 
 	if warnings != nil {
-		log.Info(fmt.Sprintf("Warnings: \n %v", warnings))
+		log.Info(fmt.Sprintf("Warnings: %v", warnings))
 	}
-
-	log.Info(fmt.Sprintf("Nmap done: %d hosts up scanned in %3f seconds", len(result.Hosts), result.Stats.Finished.Elapsed))
 
 	for _, host := range result.Hosts {
 		hostdata := hostData{}
@@ -168,7 +163,7 @@ func nmapScan(ch chan hostData, subnetName string, subnetNamespace string, wg *s
 			hostdata.subnetNamespace = subnetNamespace
 			ch <- hostdata
 		} else {
-			log.Info("ip or mac info not found", "host details", host.Addresses)
+			log.Info("mac not found", "host", host.Addresses)
 		}
 	}
 }
@@ -210,7 +205,7 @@ func nmapScanIPv6(ch chan hostData, targetSubnet string, wg *sync.WaitGroup, int
 			hostdata.ip = host.Addresses[0].Addr
 			ch <- hostdata
 		} else {
-			log.Info("ip or mac info not found", "host details", host.Addresses)
+			log.Info("mac not found", "host", host.Addresses)
 		}
 	}
 }
@@ -237,8 +232,7 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 	return kubeconfig
 }
 
-func IPCleaner(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
-	log.Info("Starting IP cleaner")
+func ipCleanerCronJob(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
 	// Initially fill the cache with expired time, this will ensure to ping all IPs in first run
 	ips := getIps(origin, log)
 	expiredTime := time.Now().Add(-(time.Second * time.Duration(c.TTL) * 2))
@@ -286,39 +280,6 @@ func IPCleaner(c *netdataconf, ctx context.Context, origin string, log logr.Logg
 		}
 		time.Sleep(time.Second * time.Duration(c.TTL))
 	}
-}
-
-func createIPAM(hostdata hostData, c *netdataconf, ctx context.Context, ip v1alpha1.IP, log logr.Logger) {
-	kubeconfig := kubeconfigCreate(log)
-	cs, _ := clientset.NewForConfig(kubeconfig)
-	client := cs.IpamV1Alpha1().IPs(hostdata.subnetNamespace)
-
-	ip.Spec.Subnet.Name = hostdata.subnetName
-	ip.ObjectMeta.Namespace = hostdata.subnetNamespace
-
-	log.Info("namespace" + ip.ObjectMeta.Namespace)
-	createNewIP := true
-
-	handleDuplicateMacs(ctx, ip, client, &createNewIP, log)
-
-	handleDuplicateIPs(ctx, ip, client, &createNewIP, log)
-
-	// Create new IP
-	if createNewIP {
-		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
-		ip.OwnerReferences = append(ip.OwnerReferences, ref)
-		log.Info("calling create", "object", ip)
-		createdIP, err := client.Create(ctx, &ip, v1.CreateOptions{})
-		if err != nil {
-			log.Error(err, "Create IP error")
-		}
-		log.Info(fmt.Sprintf("Created IP object: %s \n", createdIP.ObjectMeta.Name))
-
-	}
-	// update timestamp in the local cache
-	mu.Lock()
-	ipLocalCache[ip.Spec.IP.String()] = time.Now()
-	mu.Unlock()
 }
 
 func handleDuplicateMacs(ctx context.Context, ip v1alpha1.IP, client clienta1.IPInterface, createNewIP *bool, log logr.Logger) {
@@ -371,12 +332,11 @@ func FullIPv6(ip net.IP) string {
 		string(dst[28:])
 }
 
-func createNetCRD(hostdata hostData, conf *netdataconf, ctx context.Context, log logr.Logger) {
+func createIP(hostdata hostData, conf *netdataconf, ctx context.Context, log logr.Logger) {
 	macLow := strings.ToLower(hostdata.mac)
 	hostdata.mac = macLow
 
 	crdname := strings.ReplaceAll(macLow, ":", "")
-	log.Info("mac is : " + crdname)
 	labels := make(map[string]string)
 	labels["ip"] = strings.ReplaceAll(hostdata.ip, ":", "-")
 	labels["origin"] = "nmap"
@@ -384,7 +344,7 @@ func createNetCRD(hostdata hostData, conf *netdataconf, ctx context.Context, log
 	labels["labelsubnet"] = conf.SubnetLabel["labelsubnet"]
 	ipaddr, _ := v1alpha1.IPAddrFromString(hostdata.ip)
 
-	ipIPAM := &v1alpha1.IP{
+	ip := &v1alpha1.IP{
 		ObjectMeta: v1.ObjectMeta{
 			GenerateName: crdname + "-" + "nmap" + "-",
 			Namespace:    conf.IPNamespace,
@@ -392,30 +352,49 @@ func createNetCRD(hostdata hostData, conf *netdataconf, ctx context.Context, log
 		},
 		Spec: v1alpha1.IPSpec{
 			Subnet: corev1.LocalObjectReference{
-				Name: "emptynameshouldnotexist",
+				Name: hostdata.subnetName,
 			},
 			IP: ipaddr,
 		},
 	}
-	log.Info("ip", "entire ip", ipIPAM)
-	createIPAM(hostdata, conf, ctx, *ipIPAM, log)
+
+	createNewIP := true
+	cs, _ := clientset.NewForConfig(kubeconfig)
+	client := cs.IpamV1Alpha1().IPs(hostdata.subnetNamespace)
+	handleDuplicateMacs(ctx, *ip, client, &createNewIP, log)
+	handleDuplicateIPs(ctx, *ip, client, &createNewIP, log)
+
+	if createNewIP {
+		ref := v1.OwnerReference{Name: "netdata.onmetal.de/ip", APIVersion: "v1", Kind: "ip", UID: "ip"}
+		ip.OwnerReferences = append(ip.OwnerReferences, ref)
+		createdIP, err := client.Create(ctx, ip, v1.CreateOptions{})
+		if err != nil {
+			log.Error(err, "Create IP error")
+		}
+		log.Info(fmt.Sprintf("Created IP : %s", createdIP.ObjectMeta.Name))
+
+	}
+	// update timestamp in the local cache
+	mu.Lock()
+	ipLocalCache[ip.Spec.IP.String()] = time.Now()
+	mu.Unlock()
 }
 
 func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
-	kubeconfig := kubeconfigCreate(log)
+	//kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	client := cs.IpamV1Alpha1().IPs(ip.ObjectMeta.Namespace)
 	err := client.Delete(ctx, ip.ObjectMeta.Name, v1.DeleteOptions{})
 	if err != nil {
 		log.Error(err, "delete IP error")
 	} else {
-		log.Info(fmt.Sprintf("deleted IP  %s", ip.ObjectMeta.Name))
+		log.Info(fmt.Sprintf("Deleted IP  %s", ip.ObjectMeta.Name))
 	}
 	return err
 }
 
 func getIps(origin string, log logr.Logger) []v1alpha1.IP {
-	kubeconfig := kubeconfigCreate(log)
+	//kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	clientip := cs.IpamV1Alpha1().IPs(metav1.NamespaceAll)
 
@@ -441,7 +420,7 @@ func IpVersion(s string) string {
 	return ""
 }
 
-func nmapProcess(c *netdataconf, ctx context.Context, ch chan hostData, log logr.Logger) {
+func subnetScanCronjob(c *netdataconf, ctx context.Context, ch chan hostData, log logr.Logger) {
 	wg := sync.WaitGroup{}
 	for {
 		subnetList := c.getSubnets(log)
@@ -460,7 +439,7 @@ func nmapProcess(c *netdataconf, ctx context.Context, ch chan hostData, log logr
 				continue
 			}
 
-			log.Info("started Nmap scan ", "subnet", subnet, "interface", interfaceName)
+			log.Info("scanning subnet", "subnet", subnet, "interface", interfaceName)
 
 			if IpVersion(subnet) == "ipv4" {
 				wg.Add(1)
@@ -471,7 +450,7 @@ func nmapProcess(c *netdataconf, ctx context.Context, ch chan hostData, log logr
 			}
 		}
 		wg.Wait()
-		time.Sleep(time.Minute * 30)
+		time.Sleep(time.Second * time.Duration(c.TTL))
 	}
 }
 
@@ -492,23 +471,20 @@ func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (inter
 
 func Start() {
 	log := Log.WithValues("netdata", "oob")
-	log.Info("Start nmap scanner")
-	// get configmap data
 	var c netdataconf
 	c.getConf(log)
 	log.Info("config", "config", c)
 	ctx := context.TODO()
 
-	// Start IP Cleaner go routine, this will be executed only once and it will run forever.
-	// doOnce.Do(func() {
-	// 	go IPCleaner(&c, ctx, "nmap", log)
-	// })
+	log.Info("Start IP Cleaner cron job")
+	go ipCleanerCronJob(&c, ctx, "nmap", log)
 
 	ch := make(chan hostData, 5)
-	go nmapProcess(&c, ctx, ch, log)
+	log.Info("Start Subnet scan cron job")
+	go subnetScanCronjob(&c, ctx, ch, log)
 
 	for hostdata := range ch {
-		log.Info("creating ip object", "ip", hostdata.ip, "mac", hostdata.mac)
-		createNetCRD(hostdata, &c, ctx, log)
+		createIP(hostdata, &c, ctx, log)
 	}
+	log.Info("Exit Netdata")
 }
