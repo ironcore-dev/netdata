@@ -170,17 +170,16 @@ func nmapScanIPv6(ch chan hostData, subnetName string, wg *sync.WaitGroup, inter
 
 	defer wg.Done()
 
-	// sudo nmap -6 --script=targets-ipv6-multicast-echo.nse --script-args 'newtargets,interface=eno1' -sn -sP -oX -
-
 	args := map[string]string{"newtargets": "", "interface": interfaceName, "srcip": interfaceAddress}
 
+	// TODO: find better way of specifying/skipping the target
 	scanner, err := nmap.NewScanner(
-		nmap.WithTargets(subnetName),
+		nmap.WithTargets(interfaceAddress),
 		nmap.WithPingScan(),
 		nmap.WithPrivileged(),
 		nmap.WithContext(ctx),
 		nmap.WithIPv6Scanning(),
-		nmap.WithScriptArgumentsFile("targets-ipv6-multicast-echo.nse"),
+		nmap.WithScripts("/nmap-ipv6-multicast-echo.nse"),
 		nmap.WithScriptArguments(args),
 	)
 	if err != nil {
@@ -461,7 +460,7 @@ func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (inter
 			_, ipnetSub, _ := net.ParseCIDR(subnet)
 			ipIf, _, _ := net.ParseCIDR(addri.String())
 			if ipnetSub.Contains(ipIf) {
-				return i.Name, addri.String()
+				return i.Name, ipIf.String()
 			}
 		}
 	}
