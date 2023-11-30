@@ -62,7 +62,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-var doOnce sync.Once
 var ipLocalCache = make(map[string]time.Time)
 var mu sync.Mutex
 var delMu sync.Mutex

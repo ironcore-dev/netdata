@@ -31,7 +31,6 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 
@@ -48,11 +47,6 @@ import (
 
 var (
 	scheme = runtime.NewScheme()
-	ns, _  = getInClusterNamespace()
-)
-
-var (
-	setupLog = ctrl.Log.WithName("setup")
 )
 
 func init() {
@@ -71,14 +65,6 @@ func getenv(key string, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func getInClusterNamespace() (string, error) {
-	ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("cannot determine in-cluster namespace: %w", err)
-	}
-	return string(ns), nil
 }
 
 func main() {
