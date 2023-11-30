@@ -104,8 +104,6 @@ func (c *netdataconf) getConf(log logr.Logger) *netdataconf {
 
 // get subnets by label clusterwide
 func (c *netdataconf) getSubnets(log logr.Logger) *v1alpha1.SubnetList {
-	//kubeconfig := kubeconfigCreate(log)
-
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	clientSubnet := cs.IpamV1Alpha1().Subnets(metav1.NamespaceAll)
 	labelSelector := metav1.LabelSelector{MatchLabels: c.SubnetLabel}
@@ -132,8 +130,6 @@ func (c *netdataconf) validateInterval(log logr.Logger) {
 
 func nmapScan(ch chan hostData, subnetName string, wg *sync.WaitGroup, ctx context.Context, log logr.Logger) {
 	defer wg.Done()
-	//  setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip  /usr/bin/nmap
-	// nmap --privileged -sn -oX - 192.168.178.0/24
 	scanner, err := nmap.NewScanner(
 		nmap.WithTargets(subnetName),
 		nmap.WithPingScan(),
@@ -379,7 +375,6 @@ func createIP(hostdata hostData, conf *netdataconf, ctx context.Context, log log
 }
 
 func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
-	//kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	client := cs.IpamV1Alpha1().IPs(ip.ObjectMeta.Namespace)
 	err := client.Delete(ctx, ip.ObjectMeta.Name, v1.DeleteOptions{})
@@ -392,7 +387,6 @@ func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
 }
 
 func getIps(origin string, log logr.Logger) []v1alpha1.IP {
-	//kubeconfig := kubeconfigCreate(log)
 	cs, _ := clientset.NewForConfig(kubeconfig)
 	clientip := cs.IpamV1Alpha1().IPs(metav1.NamespaceAll)
 
