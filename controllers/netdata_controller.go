@@ -71,7 +71,6 @@ var (
 	kubeconfig = kubeconfigCreate(Log)
 )
 
-// NetdataMap is resulted map of discovered hosts
 type hostData struct {
 	ip         string
 	mac        string
@@ -79,7 +78,6 @@ type hostData struct {
 }
 
 type netdataconf struct {
-	Interval    int               `yaml:"interval"`
 	TTL         int               `yaml:"ttl"`
 	IPNamespace string            `default:"default" yaml:"ipnamespace"`
 	SubnetLabel map[string]string `yaml:"subnetLabelSelector"`
