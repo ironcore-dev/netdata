@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ import (
 	nmap "github.com/Ullaakut/nmap/v2"
 
 	"github.com/ironcore-dev/ipam/api/ipam/v1alpha1"
+	ipaminformer "github.com/ironcore-dev/ipam/clientgo/informers"
+	ipam "github.com/ironcore-dev/ipam/clientgo/ipam"
 	"github.com/ironcore-dev/ipam/clientset"
 	clienta1 "github.com/ironcore-dev/ipam/clientset/v1alpha1"
 
@@ -31,7 +34,9 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -187,6 +192,43 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 		_ = errors.Wrap(err, "unable to add registered types to client scheme")
 	}
 	return kubeconfig
+}
+
+func getKubeConfig() string {
+	home := homedir.HomeDir()
+	kubeconfig := filepath.Join(home, ".kube", "config")
+	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
+		panic("kubeconfig not found")
+	}
+	return kubeconfig
+}
+
+func getIpsViaInformer() {
+	cs, _ := ipam.NewForConfig(kubeconfig)
+	informerFactory := ipaminformer.NewSharedInformerFactory(cs, time.Second*30)
+
+	ipInformer := informerFactory.Ipam().V1alpha1().IPs()
+
+	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			fmt.Printf("IP added: %s\n", obj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			fmt.Printf("IP updated: %s\n", newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			fmt.Printf("IP deleted: %s\n", obj)
+		},
+	})
+
+	// Start the informer
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	go ipInformer.Informer().Run(stopCh)
+
+	// Run until interrupted
+	select {}
 }
 
 func ipCleanerCronJob(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
