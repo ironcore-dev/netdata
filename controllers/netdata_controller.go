@@ -211,15 +211,21 @@ func getIpsViaInformer() {
 
 	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			fmt.Printf("****************IP added: %s\n-------------------\n", obj)
+			IP := obj.(*v1alpha1.IP)
+			fmt.Println("IP added : ", IP.Name)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
 			// it can be ignored
-			fmt.Printf("****************IP updated: %s\n-------------------\n", newObj)
+			oldIP := oldObj.(*v1alpha1.IP)
+			newIP := newObj.(*v1alpha1.IP)
+			if oldIP.ResourceVersion != newIP.ResourceVersion {
+				fmt.Println("IP updated : ", newIP.Name)
+			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			fmt.Printf("****************IP deleted: %s\n-------------------\n", obj)
+			IP := obj.(*v1alpha1.IP)
+			fmt.Println("IP deleted : ", IP.Name)
 		},
 	})
 
