@@ -21,7 +21,7 @@ spec:
       securityContext:
         {}
       hostNetwork: true
-      hostName: mgmt1
+      hostname: mgmt1
       containers:
         - name: manager-nmap
           command:
