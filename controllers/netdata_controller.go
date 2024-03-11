@@ -211,13 +211,15 @@ func getIpsViaInformer() {
 
 	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			fmt.Printf("IP added: %s\n", obj)
+			fmt.Printf("****************IP added: %s\n-------------------\n", obj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			fmt.Printf("IP updated: %s\n", newObj)
+			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
+			// it can be ignored
+			fmt.Printf("****************IP updated: %s\n-------------------\n", newObj)
 		},
 		DeleteFunc: func(obj interface{}) {
-			fmt.Printf("IP deleted: %s\n", obj)
+			fmt.Printf("****************IP deleted: %s\n-------------------\n", obj)
 		},
 	})
 
@@ -233,6 +235,7 @@ func getIpsViaInformer() {
 
 func ipCleanerCronJob(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
 	// Initially fill the cache with expired time, this will ensure to ping all IPs in first run
+	go getIpsViaInformer()
 	ips := getIps(origin, log)
 	expiredTime := time.Now().Add(-(time.Second * time.Duration(c.TTL) * 2))
 	for _, ip := range ips {
