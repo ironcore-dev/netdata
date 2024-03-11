@@ -203,6 +203,9 @@ func getKubeConfig() string {
 	return kubeconfig
 }
 
+// use this IP map instead of GetIPs in the ipCleanerCronJob function.
+var ipMap = map[string](*v1alpha1.IP){}
+
 func getIpsViaInformer() {
 	cs, _ := ipam.NewForConfig(kubeconfig)
 	informerFactory := ipaminformer.NewSharedInformerFactory(cs, time.Second*30)
@@ -213,6 +216,7 @@ func getIpsViaInformer() {
 		AddFunc: func(obj interface{}) {
 			IP := obj.(*v1alpha1.IP)
 			fmt.Println("IP added : ", IP.Name)
+			ipMap[IP.Name] = IP
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
@@ -221,11 +225,14 @@ func getIpsViaInformer() {
 			newIP := newObj.(*v1alpha1.IP)
 			if oldIP.ResourceVersion != newIP.ResourceVersion {
 				fmt.Println("IP updated : ", newIP.Name)
+				ipMap[newIP.Name] = newIP
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			IP := obj.(*v1alpha1.IP)
 			fmt.Println("IP deleted : ", IP.Name)
+			delete(ipMap, IP.Name)
+
 		},
 	})
 
