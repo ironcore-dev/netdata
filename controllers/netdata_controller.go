@@ -336,20 +336,6 @@ func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
 	return err
 }
 
-func getIps(origin string, log logr.Logger) []v1alpha1.IP {
-	cs, _ := clientset.NewForConfig(kubeconfig)
-	clientip := cs.IpamV1Alpha1().IPs(metav1.NamespaceAll)
-
-	labelsorigin := map[string]string{"origin": origin}
-	labelSelector := metav1.LabelSelector{MatchLabels: labelsorigin}
-	labelListOptions := metav1.ListOptions{
-		LabelSelector: labels.Set(labelSelector.MatchLabels).String(),
-		Limit:         1000,
-	}
-	ipList, _ := clientip.List(context.Background(), labelListOptions)
-	return ipList.Items
-}
-
 func IpVersion(s string) string {
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
