@@ -192,7 +192,11 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 }
 
 func ipCleanerCronJob(c *netdataconf, ctx context.Context, log logr.Logger) {
-	go getIpsViaInformer()
+	CacheInit := make(chan bool)
+
+	go getIpsViaInformer(CacheInit)
+	<-CacheInit // Wait till cache initialised for the first time
+
 	for {
 		for _, ip := range ipMap {
 			ipAddress := ip.Spec.IP.String()
@@ -397,13 +401,13 @@ func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (inter
 	return "", ""
 }
 
-func getIpsViaInformer() {
+func getIpsViaInformer(cacheInit chan bool) {
 	cs, _ := ipam.NewForConfig(kubeconfig)
 	informerFactory := ipaminformer.NewSharedInformerFactory(cs, time.Second*30)
 
 	ipInformer := informerFactory.Ipam().V1alpha1().IPs()
 
-	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			IP := obj.(*v1alpha1.IP)
 			origin, ok := IP.Labels["origin"]
@@ -431,6 +435,9 @@ func getIpsViaInformer() {
 			}
 		},
 	})
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	// Start the informer
 	stopCh := make(chan struct{})
@@ -438,6 +445,13 @@ func getIpsViaInformer() {
 
 	go ipInformer.Informer().Run(stopCh)
 
+	for {
+		if ipInformer.Informer().HasSynced() {
+			cacheInit <- true
+			break
+		}
+		time.Sleep(time.Second * 5)
+	}
 	// Run until interrupted
 	select {}
 }
