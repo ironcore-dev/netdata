@@ -38,7 +38,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-var mu sync.Mutex
+// IP local cache via informer events
+var ipMap = map[string](*v1alpha1.IP){}
 
 var (
 	Log        = ctrl.Log.WithName("netdata")
@@ -188,54 +189,6 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 		_ = errors.Wrap(err, "unable to add registered types to client scheme")
 	}
 	return kubeconfig
-}
-
-// IP local cache via informer events
-var ipMap = map[string](*v1alpha1.IP){}
-
-func getIpsViaInformer() {
-	cs, _ := ipam.NewForConfig(kubeconfig)
-	informerFactory := ipaminformer.NewSharedInformerFactory(cs, time.Second*30)
-
-	ipInformer := informerFactory.Ipam().V1alpha1().IPs()
-
-	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			IP := obj.(*v1alpha1.IP)
-			origin, ok := IP.Labels["origin"]
-			if ok && origin == "nmap" {
-				ipMap[IP.Name] = IP
-			}
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
-			// it can be ignored
-			oldIP := oldObj.(*v1alpha1.IP)
-			newIP := newObj.(*v1alpha1.IP)
-			origin, ok := newIP.Labels["origin"]
-			if ok && origin == "nmap" {
-				if oldIP.ResourceVersion != newIP.ResourceVersion {
-					ipMap[newIP.Name] = newIP
-				}
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			IP := obj.(*v1alpha1.IP)
-			origin, ok := IP.Labels["origin"]
-			if ok && origin == "nmap" {
-				delete(ipMap, IP.Name)
-			}
-		},
-	})
-
-	// Start the informer
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-
-	go ipInformer.Informer().Run(stopCh)
-
-	// Run until interrupted
-	select {}
 }
 
 func ipCleanerCronJob(c *netdataconf, ctx context.Context, log logr.Logger) {
@@ -456,6 +409,51 @@ func (c *netdataconf) getNetworkInterface(subnet string, log logr.Logger) (inter
 		}
 	}
 	return "", ""
+}
+
+func getIpsViaInformer() {
+	cs, _ := ipam.NewForConfig(kubeconfig)
+	informerFactory := ipaminformer.NewSharedInformerFactory(cs, time.Second*30)
+
+	ipInformer := informerFactory.Ipam().V1alpha1().IPs()
+
+	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			IP := obj.(*v1alpha1.IP)
+			origin, ok := IP.Labels["origin"]
+			if ok && origin == "nmap" {
+				ipMap[IP.Name] = IP
+			}
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
+			// it can be ignored
+			oldIP := oldObj.(*v1alpha1.IP)
+			newIP := newObj.(*v1alpha1.IP)
+			origin, ok := newIP.Labels["origin"]
+			if ok && origin == "nmap" {
+				if oldIP.ResourceVersion != newIP.ResourceVersion {
+					ipMap[newIP.Name] = newIP
+				}
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			IP := obj.(*v1alpha1.IP)
+			origin, ok := IP.Labels["origin"]
+			if ok && origin == "nmap" {
+				delete(ipMap, IP.Name)
+			}
+		},
+	})
+
+	// Start the informer
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	go ipInformer.Informer().Run(stopCh)
+
+	// Run until interrupted
+	select {}
 }
 
 func Start() {
