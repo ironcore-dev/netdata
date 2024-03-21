@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +35,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-var ipLocalCache = make(map[string]time.Time)
 var mu sync.Mutex
-var delMu sync.Mutex
 
 var (
 	Log        = ctrl.Log.WithName("netdata")
@@ -194,16 +190,7 @@ func kubeconfigCreate(log logr.Logger) *rest.Config {
 	return kubeconfig
 }
 
-func getKubeConfig() string {
-	home := homedir.HomeDir()
-	kubeconfig := filepath.Join(home, ".kube", "config")
-	if _, err := os.Stat(kubeconfig); os.IsNotExist(err) {
-		panic("kubeconfig not found")
-	}
-	return kubeconfig
-}
-
-// use this IP map instead of GetIPs in the ipCleanerCronJob function.
+// IP local cache via informer events
 var ipMap = map[string](*v1alpha1.IP){}
 
 func getIpsViaInformer() {
@@ -382,10 +369,6 @@ func createIP(hostdata hostData, conf *netdataconf, ctx context.Context, log log
 		log.Info(fmt.Sprintf("Created IP : %s", createdIP.ObjectMeta.Name))
 
 	}
-	// update timestamp in the local cache
-	mu.Lock()
-	ipLocalCache[ip.Spec.IP.String()] = time.Now()
-	mu.Unlock()
 }
 
 func deleteIP(ctx context.Context, ip *v1alpha1.IP, log logr.Logger) error {
