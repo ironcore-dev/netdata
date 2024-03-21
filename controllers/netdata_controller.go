@@ -215,24 +215,29 @@ func getIpsViaInformer() {
 	ipInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			IP := obj.(*v1alpha1.IP)
-			fmt.Println("IP added : ", IP.Name)
-			ipMap[IP.Name] = IP
+			origin, ok := IP.Labels["origin"]
+			if ok && origin == "nmap" {
+				ipMap[IP.Name] = IP
+			}
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			// compare the resource version, if they are different then object is actually updated otherwise its a cache update event and
 			// it can be ignored
 			oldIP := oldObj.(*v1alpha1.IP)
 			newIP := newObj.(*v1alpha1.IP)
-			if oldIP.ResourceVersion != newIP.ResourceVersion {
-				fmt.Println("IP updated : ", newIP.Name)
-				ipMap[newIP.Name] = newIP
+			origin, ok := newIP.Labels["origin"]
+			if ok && origin == "nmap" {
+				if oldIP.ResourceVersion != newIP.ResourceVersion {
+					ipMap[newIP.Name] = newIP
+				}
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
 			IP := obj.(*v1alpha1.IP)
-			fmt.Println("IP deleted : ", IP.Name)
-			delete(ipMap, IP.Name)
-
+			origin, ok := IP.Labels["origin"]
+			if ok && origin == "nmap" {
+				delete(ipMap, IP.Name)
+			}
 		},
 	})
 
@@ -246,27 +251,11 @@ func getIpsViaInformer() {
 	select {}
 }
 
-func ipCleanerCronJob(c *netdataconf, ctx context.Context, origin string, log logr.Logger) {
-	// Initially fill the cache with expired time, this will ensure to ping all IPs in first run
+func ipCleanerCronJob(c *netdataconf, ctx context.Context, log logr.Logger) {
 	go getIpsViaInformer()
-	ips := getIps(origin, log)
-	expiredTime := time.Now().Add(-(time.Second * time.Duration(c.TTL) * 2))
-	for _, ip := range ips {
-		ipLocalCache[ip.Spec.IP.String()] = expiredTime
-	}
-
 	for {
-		ips := getIps(origin, log)
-		for _, ip := range ips {
-
+		for _, ip := range ipMap {
 			ipAddress := ip.Spec.IP.String()
-
-			// If the IP is seen 90% TTL then do not ping it
-			lastSeen := time.Since(ipLocalCache[ipAddress]).Seconds()
-			if lastSeen < float64(c.TTL)*0.9 {
-				continue
-			}
-
 			pinger, err := ping.NewPinger(ipAddress)
 			if err != nil {
 				log.Info(fmt.Sprintf("IP Cleaner Address could not be resolved, IP object: %s", ip.Name)) // no such host, the address cant be resolved
@@ -288,11 +277,9 @@ func ipCleanerCronJob(c *netdataconf, ctx context.Context, origin string, log lo
 					if err != nil {
 						log.Info(err.Error())
 					}
-					err := deleteIP(ctx, &ip, log)
-					if err == nil {
-						delMu.Lock()
-						delete(ipLocalCache, ipAddress)
-						delMu.Unlock()
+					err := deleteIP(ctx, ip, log)
+					if err != nil {
+						log.Info(err.Error())
 					}
 				}
 			}
@@ -496,7 +483,7 @@ func Start() {
 	ctx := context.TODO()
 
 	log.Info("Start IP Cleaner cron job")
-	go ipCleanerCronJob(&c, ctx, "nmap", log)
+	go ipCleanerCronJob(&c, ctx, log)
 
 	ch := make(chan hostData, 5)
 	log.Info("Start Subnet scan cron job")
